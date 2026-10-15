@@ -145,8 +145,11 @@ footer{position:fixed;bottom:0;left:0;right:0;text-align:center;font-size:11px;c
         <select id="fBriefType" onchange="renderDaily()"><option value="">全部类型</option><option>监管处罚</option><option>法律法规</option><option>消费骗局</option><option>品牌舆情</option><option>行业快讯</option></select>
         <label style="display:flex;align-items:center;gap:5px;font-size:13px;color:var(--ink2)"><input type="checkbox" id="fBriefUnread" onchange="renderDaily()" style="width:auto">只看未读</label>
       </div>
+      <button class="btn ghost" onclick="openHistory()">📅 回看历史</button>
+      <button class="btn ghost" id="backTodayBtn" onclick="setViewDay(todayKey())" style="display:none">回到今天</button>
       <button class="btn ghost" onclick="manualSync()">刷新</button>
     </div>
+    <div id="viewDayHint" style="display:none;margin-bottom:10px;font-size:13px;color:var(--ink2)"></div>
     <div id="dailyList"></div>
   </section>
 
@@ -207,7 +210,7 @@ footer{position:fixed;bottom:0;left:0;right:0;text-align:center;font-size:11px;c
 <div class="toast" id="toast"></div>
 
 <script>
-const BUILD='2026.10.15-b13';
+const BUILD='2026.10.15-b14';
 const API='https://yulin-scale-sync.onrender.com';
 const ROOM='caixie2026';
 const LSKEY='shendu-workbench-cache';
@@ -592,28 +595,45 @@ function briefCard(date,it){
   </div>`;
 }
 const BRIEF_ICON={'监管处罚':'🏛','法律法规':'⚖️','消费骗局':'🕳','品牌舆情':'📣','行业快讯':'📈'};
+let _viewDay=todayKey();
+function setViewDay(d){
+  _viewDay=d;
+  const backBtn=document.getElementById('backTodayBtn');
+  const hint=document.getElementById('viewDayHint');
+  if(d===todayKey()){backBtn.style.display='none';hint.style.display='none';}
+  else{backBtn.style.display='inline-block';hint.style.display='block';hint.innerHTML=`正在回看 <b>${d}</b> 的线索（共 ${dailyCount(d)} 条）`;}
+  renderDaily();
+}
+function openHistory(){
+  const dates=Object.keys(DB.daily||{}).filter(d=>d!==todayKey()).sort().reverse();
+  if(!dates.length){toast('还没有历史线索');return;}
+  const rows=dates.map(d=>`<div class="card" style="cursor:pointer" onclick="setViewDay('${d}');closeModal()">
+    <h3>📅 ${d}</h3>
+    <div class="meta"><span class="tag t-date">${dailyCount(d)} 条</span>${dailyUnread(d)?`<span class="tag" style="background:#f6ece9;color:#a8675a">未读 ${dailyUnread(d)}</span>`:''}</div>
+  </div>`).join('');
+  openModal(`<h3>回看历史线索</h3><div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(180px,1fr))">${rows}</div>
+    <div class="m-actions"><button class="btn ghost" onclick="closeModal()">关闭</button></div>`);
+}
 function renderDaily(){
   const ft=val('fBriefType');
   const onlyUnread=document.getElementById('fBriefUnread').checked;
-  const dates=Object.keys(DB.daily||{}).sort().reverse();
   const box=document.getElementById('dailyList');
+  const dates=Object.keys(DB.daily||{}).sort().reverse();
   if(!dates.length){box.innerHTML=`<div class="empty"><b>每日雷达还没有内容</b>每天中午 12 点，AI 会自动把监管处罚、法律法规、消费骗局、品牌舆情和行业快讯抓进来放在这里</div>`;return;}
+  const d=_viewDay in (DB.daily||{})?_viewDay:dates[0];
+  const all=DB.daily[d]||[];
   const groups=ft?[ft]:BRIEF_TYPES;
-  box.innerHTML=dates.map(d=>{
-    const all=DB.daily[d]||[];
-    if(!all.length)return '';
-    const dateHead=`<div class="sec-title" style="margin-top:18px">📅 ${d} · 共 ${dailyCount(d)} 条 · 未读 ${dailyUnread(d)}</div>`;
-    const body=groups.map(g=>{
-      let items=all.filter(x=>x.type===g);
-      if(onlyUnread)items=items.filter(x=>!x.read);
-      if(!items.length)return '';
-      const unreadN=items.filter(x=>!x.read).length;
-      const icon=BRIEF_ICON[g]||'▪';
-      return `<div class="grp-head"><span class="grp-icon">${icon}</span>${esc(g)}<span class="grp-n">${items.length} 条${unreadN?` · 未读 ${unreadN}`:''}</span></div>`+
-        `<div class="grid" style="margin-bottom:14px">${items.map(it=>briefCard(d,it)).join('')}</div>`;
-    }).join('');
-    return dateHead+body;
+  const dateHead=`<div class="sec-title" style="margin-top:4px">📅 ${d} · 共 ${dailyCount(d)} 条 · 未读 ${dailyUnread(d)}</div>`;
+  const body=groups.map(g=>{
+    let items=all.filter(x=>x.type===g);
+    if(onlyUnread)items=items.filter(x=>!x.read);
+    if(!items.length)return '';
+    const unreadN=items.filter(x=>!x.read).length;
+    const icon=BRIEF_ICON[g]||'▪';
+    return `<div class="grp-head"><span class="grp-icon">${icon}</span>${esc(g)}<span class="grp-n">${items.length} 条${unreadN?` · 未读 ${unreadN}`:''}</span></div>`+
+      `<div class="grid" style="margin-bottom:14px">${items.map(it=>briefCard(d,it)).join('')}</div>`;
   }).join('');
+  box.innerHTML=dateHead+body;
 }
 
 // ---------- 数据导入导出 ----------
