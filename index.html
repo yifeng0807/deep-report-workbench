@@ -72,6 +72,8 @@ textarea{resize:vertical;min-height:70px}
 .stat .n{font-size:26px;font-weight:700;color:var(--accent)}
 .stat .l{font-size:12px;color:var(--ink3)}
 .sec-title{font-size:15px;font-weight:600;margin:20px 0 10px;padding-left:9px;border-left:3px solid var(--accent)}
+.t-brief-行业消息{background:#eaf1f5;color:#4a6f8a}.t-brief-舆情{background:#f6f2e9;color:#b8860b}.t-brief-竞品{background:#eef5f0;color:#4a9a6b}
+.brief.read{opacity:.55}
 /* modal */
 .mask{position:fixed;inset:0;background:rgba(20,24,30,.45);display:none;z-index:100;align-items:flex-start;justify-content:center;padding:30px 14px;overflow-y:auto}
 .mask.on{display:flex}
@@ -109,6 +111,7 @@ footer{position:fixed;bottom:0;left:0;right:0;text-align:center;font-size:11px;c
   </div>
   <nav id="nav">
     <button data-tab="overview" class="on">总览</button>
+    <button data-tab="daily">每日雷达</button>
     <button data-tab="topics">选题库</button>
     <button data-tab="materials">素材夹</button>
     <button data-tab="sources">采访对象</button>
@@ -126,6 +129,19 @@ footer{position:fixed;bottom:0;left:0;right:0;text-align:center;font-size:11px;c
     <div class="grid" id="ovActive"></div>
     <div class="sec-title">最近更新</div>
     <div class="grid" id="ovRecent"></div>
+  </section>
+
+  <!-- 每日雷达 -->
+  <section class="tab" id="tab-daily">
+    <div class="bar">
+      <h2>每日雷达</h2>
+      <div class="filters">
+        <select id="fBriefType" onchange="renderDaily()"><option value="">全部类型</option><option>行业消息</option><option>舆情</option><option>竞品</option></select>
+        <label style="display:flex;align-items:center;gap:5px;font-size:13px;color:var(--ink2)"><input type="checkbox" id="fBriefUnread" onchange="renderDaily()" style="width:auto">只看未读</label>
+      </div>
+      <button class="btn ghost" onclick="manualSync()">刷新</button>
+    </div>
+    <div id="dailyList"></div>
   </section>
 
   <!-- 选题库 -->
@@ -185,14 +201,14 @@ footer{position:fixed;bottom:0;left:0;right:0;text-align:center;font-size:11px;c
 <div class="toast" id="toast"></div>
 
 <script>
-const BUILD='2026.10.15-b07';
+const BUILD='2026.10.15-b08';
 const API='https://yulin-scale-sync.onrender.com';
 const ROOM='caixie2026';
 const LSKEY='shendu-workbench-cache';
 const LS_SAVEDAT='shendu-workbench-savedat';
 
 // ---------- 数据 ----------
-let DB={topics:[],materials:[],sources:[],drafts:[],reviews:[]};
+let DB={topics:[],materials:[],sources:[],drafts:[],reviews:[],daily:{}};
 let cloudSavedAt=0;          // 我们已知的云端版本时间
 let dirty=false, saveTimer=null, online=false;
 
@@ -234,7 +250,7 @@ function cacheLocal(savedAt){
 }
 function normalize(d){
   d=d&&typeof d==='object'?d:{};
-  return{topics:d.topics||[],materials:d.materials||[],sources:d.sources||[],drafts:d.drafts||[],reviews:d.reviews||[]};
+  return{topics:d.topics||[],materials:d.materials||[],sources:d.sources||[],drafts:d.drafts||[],reviews:d.reviews||[],daily:d.daily||{}};
 }
 function markDirty(){dirty=true;cloudSavedAt=cloudSavedAt||0;cacheLocal();scheduleSave();renderAll();}
 function scheduleSave(){clearTimeout(saveTimer);saveTimer=setTimeout(saveCloud,1500);}
@@ -509,11 +525,57 @@ function renderOverview(){
     ['素材',DB.materials.length],
     ['采访对象',DB.sources.length],
     ['稿件',DB.drafts.length],
-    ['质检记录',revs]
+    ['质检记录',revs],
+    ['今日资讯',dailyCount(todayKey())],
+    ['未读',dailyUnread(todayKey())]
   ].map(([l,n])=>`<div class="stat"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('');
   document.getElementById('ovActive').innerHTML=active.length?active.map(t=>topicCard(t,true)).join(''):`<div class="empty" style="grid-column:1/-1"><b>暂无进行中的选题</b>把候选选题推进到「孵化中」就会出现在这里</div>`;
   const recent=[...DB.topics].sort((a,b)=>(b.updatedAt||b.createdAt)-(a.updatedAt||a.createdAt)).slice(0,4);
   document.getElementById('ovRecent').innerHTML=recent.length?recent.map(t=>topicCard(t,true)).join(''):`<div class="empty" style="grid-column:1/-1"><b>欢迎使用深度采写工作台</b>从「选题库」新建第一个选题开始</div>`;
+}
+
+// ---------- 每日雷达 ----------
+const BRIEF_TYPES=['行业消息','舆情','竞品'];
+function todayKey(){const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
+function dailyCount(key){const a=DB.daily&&DB.daily[key];return a?a.length:0;}
+function dailyUnread(key){const a=DB.daily&&DB.daily[key];return a?a.filter(x=>!x.read).length:0;}
+function guessField(text){
+  const s=text||'';
+  if(/食|餐饮|添加剂|抽检|农残|肉|奶|油|零食|饮料|外卖|预制菜|蛋|果蔬|奶粉|菌/.test(s))return '食品安全';
+  if(/维权|投诉|退|假|欺诈|侵权|乱收费|套路|预付|直播|售后/.test(s))return '消费维权';
+  return '民生其他';
+}
+function markRead(date,id){const a=DB.daily&&DB.daily[date];if(!a)return;const it=a.find(x=>x.id===id);if(!it)return;it.read=!it.read;markDirty();}
+function toTopic(date,id){
+  const a=DB.daily&&DB.daily[date];if(!a)return;const it=a.find(x=>x.id===id);if(!it)return;
+  DB.topics.unshift({id:uid(),title:it.title,field:guessField(it.title+' '+it.summary),reason:it.summary||'',angle:'',source:it.source||'',competitor:'',score:it.deep?4:3,status:'候选',createdAt:Date.now(),updatedAt:Date.now(),notes:''});
+  it.read=true;markDirty();toast('已转入选题库');
+}
+function briefCard(date,it){
+  return `<div class="card brief ${it.read?'read':''}">
+    <h3>${it.url?`<a href="${esc(it.url)}" target="_blank" rel="noopener">${esc(it.title)} 🔗</a>`:esc(it.title)}</h3>
+    <div class="meta"><span class="badge t-brief-${esc(it.type||'')}">${esc(it.type||'')}</span>${it.deep?'<span class="badge p-必采">可做深度</span>':''}<span class="tag t-date">${esc(it.source||'')}</span></div>
+    ${it.summary?`<div class="desc">${esc(it.summary)}</div>`:''}
+    <div class="actions">
+      <button class="link-btn" onclick="markRead('${date}','${it.id}')">${it.read?'标记未读':'标记已读'}</button>
+      <button class="link-btn" onclick="toTopic('${date}','${it.id}')">转选题</button>
+    </div>
+  </div>`;
+}
+function renderDaily(){
+  const ft=val('fBriefType');
+  const onlyUnread=document.getElementById('fBriefUnread').checked;
+  const dates=Object.keys(DB.daily||{}).sort().reverse();
+  const box=document.getElementById('dailyList');
+  if(!dates.length){box.innerHTML=`<div class="empty"><b>每日雷达还没有内容</b>每天中午 12 点，AI 会自动把行业消息、舆情和竞品动态抓进来放在这里</div>`;return;}
+  box.innerHTML=dates.map(d=>{
+    let items=DB.daily[d]||[];
+    if(ft)items=items.filter(x=>x.type===ft);
+    if(onlyUnread)items=items.filter(x=>!x.read);
+    if(!items.length)return '';
+    return `<div class="sec-title" style="margin-top:18px">📅 ${d} · ${dailyCount(d)} 条 · 未读 ${dailyUnread(d)}</div>`+
+      `<div class="grid" style="margin-bottom:6px">${items.map(it=>briefCard(d,it)).join('')}</div>`;
+  }).join('');
 }
 
 // ---------- 数据导入导出 ----------
@@ -524,7 +586,7 @@ function exportJSON(){
 }
 
 // ---------- 渲染 ----------
-function renderAll(){renderOverview();renderTopics();renderMaterials();renderSources();renderDrafts();}
+function renderAll(){renderOverview();renderDaily();renderTopics();renderMaterials();renderSources();renderDrafts();}
 
 document.getElementById('buildVer').textContent=BUILD;
 loadCloud();
