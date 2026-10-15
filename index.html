@@ -74,6 +74,9 @@ textarea{resize:vertical;min-height:70px}
 .sec-title{font-size:15px;font-weight:600;margin:20px 0 10px;padding-left:9px;border-left:3px solid var(--accent)}
 .t-brief-监管处罚{background:#eaf1f5;color:#4a6f8a}.t-brief-消费骗局{background:#f6ece9;color:#a8675a}.t-brief-品牌舆情{background:#f6f2e9;color:#b8860b}.t-brief-行业快讯{background:#eef5f0;color:#4a9a6b}.t-brief-法律法规{background:#efeaf7;color:#6b5b95}
 .brief.read{opacity:.55}
+.grp-head{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;color:var(--ink2);margin:14px 0 8px}
+.grp-icon{font-size:15px}
+.grp-n{font-size:12px;color:var(--ink3);font-weight:400}
 /* modal */
 .mask{position:fixed;inset:0;background:rgba(20,24,30,.45);display:none;z-index:100;align-items:flex-start;justify-content:center;padding:30px 14px;overflow-y:auto}
 .mask.on{display:flex}
@@ -201,7 +204,7 @@ footer{position:fixed;bottom:0;left:0;right:0;text-align:center;font-size:11px;c
 <div class="toast" id="toast"></div>
 
 <script>
-const BUILD='2026.10.15-b10';
+const BUILD='2026.10.15-b11';
 const API='https://yulin-scale-sync.onrender.com';
 const ROOM='caixie2026';
 const LSKEY='shendu-workbench-cache';
@@ -287,8 +290,26 @@ document.getElementById('nav').addEventListener('click',e=>{
 });
 
 // ---------- 弹窗 ----------
-function openModal(html){document.getElementById('modalBox').innerHTML=html;document.getElementById('mask').classList.add('on');}
-function closeModal(){document.getElementById('mask').classList.remove('on');}
+function openModal(html){document.getElementById('modalBox').innerHTML=html;document.getElementById('mask').classList.add('on');bindDraft();}
+function closeModal(){document.getElementById('mask').classList.remove('on');_draftKey=null;}
+let _draftKey=null;
+function bindDraft(){
+  if(!_draftKey)return;
+  const d=loadDraft(_draftKey);
+  document.querySelectorAll('#modalBox input,#modalBox textarea,#modalBox select').forEach(el=>{
+    if(d&&el.id&&d[el.id]!==undefined){if(el.type==='checkbox')el.checked=!!d[el.id];else el.value=d[el.id];}
+    el.addEventListener('input',saveDraftNow);
+    el.addEventListener('change',saveDraftNow);
+  });
+}
+function saveDraftNow(){
+  if(!_draftKey)return;
+  const d={};
+  document.querySelectorAll('#modalBox input,#modalBox textarea,#modalBox select').forEach(el=>{if(el.id)d[el.id]=el.type==='checkbox'?el.checked:el.value;});
+  try{localStorage.setItem('shendu-draft-'+_draftKey,JSON.stringify(d));}catch(e){}
+}
+function loadDraft(key){try{return JSON.parse(localStorage.getItem('shendu-draft-'+key)||'null');}catch(e){return null;}}
+function clearDraft(key){localStorage.removeItem('shendu-draft-'+key);}
 function val(id){const el=document.getElementById(id);return el?el.value.trim():'';}
 function selVal(id){return val(id);}
 
@@ -297,6 +318,7 @@ const TOPIC_FLOW=['候选','孵化中','采写中','已成稿','已发布'];
 function topicById(id){return DB.topics.find(t=>t.id===id);}
 function openTopicForm(t){
   t=t||{};
+  _draftKey='topic-'+(t.id||'new');
   openModal(`<h3>${t.id?'编辑选题':'新建选题'}</h3>
   <div class="f-row"><label>选题标题 *</label><input type="text" id="tf_title" value="${esc(t.title||'')}" placeholder="例：预制菜添加剂标注乱象调查"></div>
   <div class="f-2"><div class="f-row"><label>领域</label><select id="tf_field"><option ${t.field==='食品安全'?'selected':''}>食品安全</option><option ${t.field==='消费维权'?'selected':''}>消费维权</option><option ${t.field==='民生其他'?'selected':''}>民生其他</option></select></div>
@@ -313,7 +335,7 @@ function saveTopic(id){
   let t=id?topicById(id):null;
   if(!t){t={id:uid(),status:'候选',createdAt:Date.now()};DB.topics.unshift(t);}
   Object.assign(t,{title,field:selVal('tf_field'),score:parseInt(val('tf_score'))||4,reason:val('tf_reason'),angle:val('tf_angle'),source:val('tf_source'),competitor:val('tf_competitor'),notes:val('tf_notes'),updatedAt:Date.now()});
-  closeModal();markDirty();toast('已保存');
+  clearDraft('topic-'+(id||'new'));closeModal();markDirty();toast('已保存');
 }
 function setTopicStatus(id,st){const t=topicById(id);if(!t)return;t.status=st;t.updatedAt=Date.now();markDirty();}
 function delTopic(id){
@@ -351,6 +373,7 @@ function renderTopics(){
 const MAT_TYPES=['政策文件','监管数据','裁判文书','媒体报道','专家观点','采访笔记','其他'];
 function openMatForm(m){
   m=m||{};
+  _draftKey='mat-'+(m.id||'new');
   const tOpts=DB.topics.map(t=>`<option value="${t.id}" ${m.topicId===t.id?'selected':''}>${esc(t.title)}</option>`).join('');
   openModal(`<h3>${m.id?'编辑素材':'添加素材'}</h3>
   <div class="f-row"><label>标题 *</label><input type="text" id="mf_title" value="${esc(m.title||'')}" placeholder="例：市场监管总局2026年第X期食品抽检通告"></div>
@@ -368,7 +391,7 @@ function saveMat(id){
   let m=id?DB.materials.find(x=>x.id===id):null;
   if(!m){m={id:uid(),createdAt:Date.now()};DB.materials.unshift(m);}
   Object.assign(m,{title,summary,topicId:val('mf_topic'),type:selVal('mf_type'),source:val('mf_source'),date:val('mf_date'),url:val('mf_url')});
-  closeModal();markDirty();toast('已保存');
+  clearDraft('mat-'+(id||'new'));closeModal();markDirty();toast('已保存');
 }
 function delMat(id){if(!confirm('删除这条素材？'))return;DB.materials=DB.materials.filter(x=>x.id!==id);markDirty();}
 function renderMaterials(){
@@ -395,6 +418,7 @@ function renderMaterials(){
 // ---------- 采访对象 ----------
 function openSrcForm(s){
   s=s||{};
+  _draftKey='src-'+(s.id||'new');
   openModal(`<h3>${s.id?'编辑采访对象':'添加采访对象'}</h3>
   <div class="f-2"><div class="f-row"><label>姓名/机构名 *</label><input type="text" id="sf_name" value="${esc(s.name||'')}" placeholder="例：王×× / 中消协"></div>
   <div class="f-row"><label>身份头衔</label><input type="text" id="sf_role" value="${esc(s.role||'')}" placeholder="例：食品科学教授 / 消费维权律师"></div></div>
@@ -414,7 +438,7 @@ function saveSrc(id){
   let s=id?DB.sources.find(x=>x.id===id):null;
   if(!s){s={id:uid(),createdAt:Date.now()};DB.sources.unshift(s);}
   Object.assign(s,{name,role:val('sf_role'),org:val('sf_org'),fields:val('sf_fields').split(/[,，]/).map(x=>x.trim()).filter(Boolean),fitTopics:val('sf_fit'),why:val('sf_why'),stance:val('sf_stance'),quotes:val('sf_quotes'),contact:val('sf_contact'),priority:selVal('sf_pri'),status:selVal('sf_status')});
-  closeModal();markDirty();toast('已保存');
+  clearDraft('src-'+(id||'new'));closeModal();markDirty();toast('已保存');
 }
 function delSrc(id){if(!confirm('删除这个采访对象？'))return;DB.sources=DB.sources.filter(x=>x.id!==id);markDirty();}
 function setSrcStatus(id,st){const s=DB.sources.find(x=>x.id===id);if(!s)return;s.status=st;markDirty();}
@@ -441,6 +465,7 @@ function renderSources(){
 // ---------- 稿件库 ----------
 function openDraftForm(d){
   d=d||{};
+  _draftKey='doc-'+(d.id||'new');
   const tOpts=DB.topics.map(t=>`<option value="${t.id}" ${d.topicId===t.id?'selected':''}>${esc(t.title)}</option>`).join('');
   openModal(`<h3>${d.id?'编辑稿件':'新建稿件'}</h3>
   <div class="f-row"><label>稿件标题 *</label><input type="text" id="df_title" value="${esc(d.title||'')}"></div>
@@ -453,13 +478,14 @@ function saveDraft(id){
   let d=id?DB.drafts.find(x=>x.id===id):null;
   if(!d){d={id:uid(),versions:[],createdAt:Date.now()};DB.drafts.unshift(d);}
   Object.assign(d,{title,topicId:val('df_topic'),status:selVal('df_status'),updatedAt:Date.now()});
-  closeModal();markDirty();toast('已保存');
+  clearDraft('doc-'+(id||'new'));closeModal();markDirty();toast('已保存');
 }
 function delDraft(id){
   if(!confirm('删除这篇稿件及其所有版本？'))return;
   DB.drafts=DB.drafts.filter(x=>x.id!==id);DB.reviews=DB.reviews.filter(r=>r.draftId!==id);markDirty();
 }
 function openVersionForm(did){
+  _draftKey='ver-'+did;
   openModal(`<h3>存入新版本</h3>
   <div class="f-row"><label>版本说明</label><input type="text" id="vf_note" placeholder="例：初稿 / 按质检意见修改后"></div>
   <div class="f-row"><label>正文（粘贴全文）</label><textarea id="vf_content" style="min-height:220px" placeholder="把稿子全文粘贴到这里…"></textarea></div>
@@ -470,7 +496,7 @@ function saveVersion(did){
   const content=document.getElementById('vf_content').value;
   if(!content.trim()){toast('内容为空');return;}
   d.versions.push({ver:d.versions.length+1,note:val('vf_note')||('版本 '+(d.versions.length+1)),content,createdAt:Date.now()});
-  d.updatedAt=Date.now();closeModal();markDirty();toast('已存版本 '+d.versions.length);
+  d.updatedAt=Date.now();clearDraft('ver-'+did);closeModal();markDirty();toast('已存版本 '+d.versions.length);
 }
 function viewVersion(did,ver){
   const d=DB.drafts.find(x=>x.id===did);const v=d&&d.versions.find(x=>x.ver===ver);if(!v)return;
@@ -554,7 +580,7 @@ function toTopic(date,id){
 function briefCard(date,it){
   return `<div class="card brief ${it.read?'read':''}">
     <h3>${it.url?`<a href="${esc(it.url)}" target="_blank" rel="noopener">${esc(it.title)} 🔗</a>`:esc(it.title)}</h3>
-    <div class="meta"><span class="badge t-brief-${esc(it.type||'')}">${esc(it.type||'')}</span>${it.deep?'<span class="badge p-必采">可做深度</span>':''}<span class="tag t-date">${esc(it.source||'')}</span></div>
+    <div class="meta"><span class="badge t-brief-${esc(it.type||'')}">${esc(it.type||'')}</span>${it.deep?'<span class="badge p-必采">可做深度</span>':''}${it.source?`<span class="tag t-date">${esc(it.source)}</span>`:''}${it.url?'':'<span class="tag" style="background:#f6ece9;color:#a8675a">未附链接</span>'}</div>
     ${it.summary?`<div class="desc">${esc(it.summary)}</div>`:''}
     <div class="actions">
       <button class="link-btn" onclick="markRead('${date}','${it.id}')">${it.read?'标记未读':'标记已读'}</button>
@@ -562,19 +588,28 @@ function briefCard(date,it){
     </div>
   </div>`;
 }
+const BRIEF_ICON={'监管处罚':'🏛','法律法规':'⚖️','消费骗局':'🕳','品牌舆情':'📣','行业快讯':'📈'};
 function renderDaily(){
   const ft=val('fBriefType');
   const onlyUnread=document.getElementById('fBriefUnread').checked;
   const dates=Object.keys(DB.daily||{}).sort().reverse();
   const box=document.getElementById('dailyList');
   if(!dates.length){box.innerHTML=`<div class="empty"><b>每日雷达还没有内容</b>每天中午 12 点，AI 会自动把监管处罚、法律法规、消费骗局、品牌舆情和行业快讯抓进来放在这里</div>`;return;}
+  const groups=ft?[ft]:BRIEF_TYPES;
   box.innerHTML=dates.map(d=>{
-    let items=DB.daily[d]||[];
-    if(ft)items=items.filter(x=>x.type===ft);
-    if(onlyUnread)items=items.filter(x=>!x.read);
-    if(!items.length)return '';
-    return `<div class="sec-title" style="margin-top:18px">📅 ${d} · ${dailyCount(d)} 条 · 未读 ${dailyUnread(d)}</div>`+
-      `<div class="grid" style="margin-bottom:6px">${items.map(it=>briefCard(d,it)).join('')}</div>`;
+    const all=DB.daily[d]||[];
+    if(!all.length)return '';
+    const dateHead=`<div class="sec-title" style="margin-top:18px">📅 ${d} · 共 ${dailyCount(d)} 条 · 未读 ${dailyUnread(d)}</div>`;
+    const body=groups.map(g=>{
+      let items=all.filter(x=>x.type===g);
+      if(onlyUnread)items=items.filter(x=>!x.read);
+      if(!items.length)return '';
+      const unreadN=items.filter(x=>!x.read).length;
+      const icon=BRIEF_ICON[g]||'▪';
+      return `<div class="grp-head"><span class="grp-icon">${icon}</span>${esc(g)}<span class="grp-n">${items.length} 条${unreadN?` · 未读 ${unreadN}`:''}</span></div>`+
+        `<div class="grid" style="margin-bottom:14px">${items.map(it=>briefCard(d,it)).join('')}</div>`;
+    }).join('');
+    return dateHead+body;
   }).join('');
 }
 
