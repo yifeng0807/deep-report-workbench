@@ -72,7 +72,7 @@ textarea{resize:vertical;min-height:70px}
 .stat .n{font-size:26px;font-weight:700;color:var(--accent)}
 .stat .l{font-size:12px;color:var(--ink3)}
 .sec-title{font-size:15px;font-weight:600;margin:20px 0 10px;padding-left:9px;border-left:3px solid var(--accent)}
-.t-brief-监管处罚{background:#eaf1f5;color:#4a6f8a}.t-brief-消费骗局{background:#f6ece9;color:#a8675a}.t-brief-品牌舆情{background:#f6f2e9;color:#b8860b}.t-brief-行业快讯{background:#eef5f0;color:#4a9a6b}
+.t-brief-监管处罚{background:#eaf1f5;color:#4a6f8a}.t-brief-消费骗局{background:#f6ece9;color:#a8675a}.t-brief-品牌舆情{background:#f6f2e9;color:#b8860b}.t-brief-行业快讯{background:#eef5f0;color:#4a9a6b}.t-brief-法律法规{background:#efeaf7;color:#6b5b95}
 .brief.read{opacity:.55}
 /* modal */
 .mask{position:fixed;inset:0;background:rgba(20,24,30,.45);display:none;z-index:100;align-items:flex-start;justify-content:center;padding:30px 14px;overflow-y:auto}
@@ -136,7 +136,7 @@ footer{position:fixed;bottom:0;left:0;right:0;text-align:center;font-size:11px;c
     <div class="bar">
       <h2>每日雷达</h2>
       <div class="filters">
-        <select id="fBriefType" onchange="renderDaily()"><option value="">全部类型</option><option>监管处罚</option><option>消费骗局</option><option>品牌舆情</option><option>行业快讯</option></select>
+        <select id="fBriefType" onchange="renderDaily()"><option value="">全部类型</option><option>监管处罚</option><option>法律法规</option><option>消费骗局</option><option>品牌舆情</option><option>行业快讯</option></select>
         <label style="display:flex;align-items:center;gap:5px;font-size:13px;color:var(--ink2)"><input type="checkbox" id="fBriefUnread" onchange="renderDaily()" style="width:auto">只看未读</label>
       </div>
       <button class="btn ghost" onclick="manualSync()">刷新</button>
@@ -201,7 +201,7 @@ footer{position:fixed;bottom:0;left:0;right:0;text-align:center;font-size:11px;c
 <div class="toast" id="toast"></div>
 
 <script>
-const BUILD='2026.10.15-b09';
+const BUILD='2026.10.15-b10';
 const API='https://yulin-scale-sync.onrender.com';
 const ROOM='caixie2026';
 const LSKEY='shendu-workbench-cache';
@@ -535,7 +535,7 @@ function renderOverview(){
 }
 
 // ---------- 每日雷达 ----------
-const BRIEF_TYPES=['监管处罚','消费骗局','品牌舆情','行业快讯'];
+const BRIEF_TYPES=['监管处罚','法律法规','消费骗局','品牌舆情','行业快讯'];
 function todayKey(){const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
 function dailyCount(key){const a=DB.daily&&DB.daily[key];return a?a.length:0;}
 function dailyUnread(key){const a=DB.daily&&DB.daily[key];return a?a.filter(x=>!x.read).length:0;}
@@ -567,7 +567,7 @@ function renderDaily(){
   const onlyUnread=document.getElementById('fBriefUnread').checked;
   const dates=Object.keys(DB.daily||{}).sort().reverse();
   const box=document.getElementById('dailyList');
-  if(!dates.length){box.innerHTML=`<div class="empty"><b>每日雷达还没有内容</b>每天中午 12 点，AI 会自动把监管处罚、消费骗局、品牌舆情和行业快讯抓进来放在这里</div>`;return;}
+  if(!dates.length){box.innerHTML=`<div class="empty"><b>每日雷达还没有内容</b>每天中午 12 点，AI 会自动把监管处罚、法律法规、消费骗局、品牌舆情和行业快讯抓进来放在这里</div>`;return;}
   box.innerHTML=dates.map(d=>{
     let items=DB.daily[d]||[];
     if(ft)items=items.filter(x=>x.type===ft);
