@@ -6,8 +6,8 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<title>深度采写工作台</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📰</text></svg>">
+<title>深流 · 深度采写工作台</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌊</text></svg>">
 <style>
 :root{
   --accent:#5b8299; --accent-d:#47687e; --ink:#2b343b; --ink2:#55626b; --ink3:#94a0a9;
@@ -109,8 +109,8 @@ footer{position:fixed;bottom:0;left:0;right:0;text-align:center;font-size:11px;c
 <body>
 <header>
   <div class="hd-in">
-    <h1>📰 深度采写工作台</h1>
-    <span class="hd-sub">央广网民生频道 · 食品消费报道</span>
+    <h1>🌊 深流</h1>
+    <span class="hd-sub">深度采写工作台 · 央广网民生频道 · 食品消费报道</span>
     <div class="sync-wrap">
       <span class="dot" id="syncDot"></span><span id="syncText">连接中…</span>
       <button class="btn ghost sm" onclick="manualSync()">立即同步</button>
@@ -127,7 +127,7 @@ footer{position:fixed;bottom:0;left:0;right:0;text-align:center;font-size:11px;c
 </header>
 
 <main>
-  <div class="ai-note">💡 <b>和 AI 专家团配合用：</b>在 WorkBuddy 里对「深度采写工作台」专家团说"把今天的选题同步到工作台"或"把质检意见写进稿件库"，AI 产出的选题、素材、采访对象、质检意见会自动出现在这里。任何设备打开本页都是同一份数据。</div>
+  <div class="ai-note">💡 <b>和 AI 专家团配合用：</b>在 WorkBuddy 里对「深流」专家团说"把今天的选题同步到工作台"或"把质检意见写进稿件库"，AI 产出的选题、素材、采访对象、质检意见会自动出现在这里。任何设备打开本页都是同一份数据。</div>
 
   <!-- 总览 -->
   <section class="tab on" id="tab-overview">
@@ -207,12 +207,12 @@ footer{position:fixed;bottom:0;left:0;right:0;text-align:center;font-size:11px;c
   </section>
 </main>
 
-<footer>深度采写工作台 · build <span id="buildVer"></span> · 数据云端同步 · 本地自动缓存</footer>
+<footer>深流 · 深度采写工作台 · build <span id="buildVer"></span> · 数据云端同步 · 本地自动缓存</footer>
 <div class="mask" id="mask" onclick="if(event.target===this)closeModal()"><div class="modal" id="modalBox"></div></div>
 <div class="toast" id="toast"></div>
 
 <script>
-const BUILD='2026.10.15-b15';
+const BUILD='2026.10.15-b16';
 const API='https://yulin-scale-sync.onrender.com';
 const ROOM='caixie2026';
 const LSKEY='shendu-workbench-cache';
@@ -578,7 +578,7 @@ function renderOverview(){
   ].map(([l,n])=>`<div class="stat"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('');
   document.getElementById('ovActive').innerHTML=active.length?active.map(t=>topicCard(t,true)).join(''):`<div class="empty" style="grid-column:1/-1"><b>暂无进行中的选题</b>把候选选题推进到「孵化中」就会出现在这里</div>`;
   const recent=[...DB.topics].sort((a,b)=>(b.updatedAt||b.createdAt)-(a.updatedAt||a.createdAt)).slice(0,4);
-  document.getElementById('ovRecent').innerHTML=recent.length?recent.map(t=>topicCard(t,true)).join(''):`<div class="empty" style="grid-column:1/-1"><b>欢迎使用深度采写工作台</b>从「选题库」新建第一个选题开始</div>`;
+  document.getElementById('ovRecent').innerHTML=recent.length?recent.map(t=>topicCard(t,true)).join(''):`<div class="empty" style="grid-column:1/-1"><b>欢迎使用「深流」</b>从「选题库」新建第一个选题开始</div>`;
 }
 
 // ---------- 每日雷达 ----------
@@ -655,7 +655,7 @@ function renderDaily(){
 function exportJSON(){
   const blob=new Blob([JSON.stringify(DB,null,2)],{type:'application/json'});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);
-  a.download='深度采写工作台-'+fmtD(Date.now())+'.json';a.click();toast('已导出');
+  a.download='深流-工作台数据-'+fmtD(Date.now())+'.json';a.click();toast('已导出');
 }
 
 // ---------- 渲染 ----------
