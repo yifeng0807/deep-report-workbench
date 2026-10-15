@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>深度采写工作台</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📰</text></svg>">
+<style>
+:root{
+  --red:#c7000b; --red-d:#a50009; --ink:#1f2329; --ink2:#4e5560; --ink3:#8a919c;
+  --line:#e6e8ec; --bg:#f5f6f8; --card:#ffffff; --amber:#d48806; --green:#1a9c54;
+  --blue:#1668dc; --shadow:0 1px 3px rgba(20,24,30,.06),0 4px 14px rgba(20,24,30,.05);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:"PingFang SC","Microsoft YaHei","Source Han Sans SC",system-ui,sans-serif;background:var(--bg);color:var(--ink);font-size:14px;line-height:1.6}
+header{background:linear-gradient(135deg,#b3000a,#d4382c);color:#fff;padding:0 20px;position:sticky;top:0;z-index:50;box-shadow:0 2px 8px rgba(0,0,0,.15)}
+.hd-in{max-width:1180px;margin:0 auto;display:flex;align-items:center;gap:14px;height:56px}
+.hd-in h1{font-size:18px;font-weight:600;letter-spacing:1px;white-space:nowrap}
+.hd-sub{font-size:12px;opacity:.85;white-space:nowrap}
+.sync-wrap{margin-left:auto;display:flex;align-items:center;gap:10px;font-size:12px}
+.dot{width:8px;height:8px;border-radius:50%;background:#7ee2a0;display:inline-block}
+.dot.saving{background:#ffd666}.dot.err{background:#ff7875}.dot.off{background:#bfbfbf}
+#syncText{opacity:.9}
+nav{max-width:1180px;margin:0 auto;display:flex;gap:2px;overflow-x:auto}
+nav button{background:transparent;border:0;color:#ffd9d6;padding:10px 16px;font-size:14px;cursor:pointer;border-bottom:3px solid transparent;white-space:nowrap;font-family:inherit}
+nav button.on{color:#fff;border-bottom-color:#fff;font-weight:600}
+main{max-width:1180px;margin:18px auto 80px;padding:0 16px}
+.tab{display:none}.tab.on{display:block}
+.bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:14px}
+.bar h2{font-size:17px;margin-right:auto}
+.btn{background:var(--red);color:#fff;border:0;border-radius:6px;padding:8px 16px;font-size:13px;cursor:pointer;font-family:inherit;transition:.15s}
+.btn:hover{background:var(--red-d)}
+.btn.ghost{background:#fff;color:var(--ink2);border:1px solid var(--line)}
+.btn.ghost:hover{border-color:var(--red);color:var(--red)}
+.btn.sm{padding:4px 10px;font-size:12px;border-radius:5px}
+select,input[type=text],input[type=date],input[type=url],input[type=number],textarea{font-family:inherit;font-size:13px;padding:7px 10px;border:1px solid var(--line);border-radius:6px;background:#fff;color:var(--ink);width:100%}
+select:focus,input:focus,textarea:focus{outline:0;border-color:var(--red);box-shadow:0 0 0 2px rgba(199,0,11,.08)}
+textarea{resize:vertical;min-height:70px}
+.filters{display:flex;gap:8px;flex-wrap:wrap}
+.filters select{width:auto;min-width:110px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;box-shadow:var(--shadow);display:flex;flex-direction:column;gap:8px}
+.card h3{font-size:15px;line-height:1.45}
+.card h3 a{color:var(--ink);text-decoration:none}
+.card h3 a:hover{color:var(--red)}
+.meta{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:12px;color:var(--ink3)}
+.tag{display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;line-height:1.7;white-space:nowrap}
+.t-field{background:#fff1f0;color:var(--red)}
+.t-type{background:#eef4ff;color:var(--blue)}
+.t-date{background:#f4f5f7;color:var(--ink3)}
+.badge{display:inline-block;padding:1px 9px;border-radius:10px;font-size:11px;font-weight:600;line-height:1.7;white-space:nowrap}
+.st-候选{background:#f4f5f7;color:#5a6472}.st-孵化中{background:#fff7e6;color:#d48806}.st-采写中{background:#e6f4ff;color:#1668dc}
+.st-已成稿{background:#f0f9eb;color:#4d8b1f}.st-已发布{background:#f0f5ff;color:#2f54eb}.st-搁置{background:#fafafa;color:#aaa;text-decoration:line-through}
+.p-必采{background:#fff1f0;color:#cf1322}.p-应采{background:#fff7e6;color:#d48806}.p-可选{background:#f6ffed;color:#389e0d}
+.lv-必改{background:#fff1f0;color:#cf1322}.lv-建议改{background:#fff7e6;color:#d48806}.lv-可选优化{background:#f6ffed;color:#389e0d}
+.v-属实{background:#f6ffed;color:#389e0d}.v-存疑{background:#fff7e6;color:#d48806}.v-有误{background:#fff1f0;color:#cf1322}.v-待核实{background:#f4f5f7;color:#5a6472}
+.score{color:#f7b500;letter-spacing:2px;font-size:12px}
+.desc{font-size:13px;color:var(--ink2);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;white-space:pre-wrap}
+.actions{display:flex;gap:8px;margin-top:auto;padding-top:6px;border-top:1px dashed var(--line);flex-wrap:wrap}
+.link-btn{background:none;border:0;color:var(--blue);font-size:12px;cursor:pointer;padding:0;font-family:inherit}
+.link-btn:hover{text-decoration:underline}
+.link-btn.danger{color:#cf1322}
+.empty{background:#fff;border:1.5px dashed var(--line);border-radius:10px;padding:44px 20px;text-align:center;color:var(--ink3)}
+.empty b{display:block;font-size:15px;color:var(--ink2);margin-bottom:6px}
+.stat-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;margin-bottom:18px}
+.stat{background:#fff;border:1px solid var(--line);border-radius:10px;padding:14px;text-align:center;box-shadow:var(--shadow)}
+.stat .n{font-size:26px;font-weight:700;color:var(--red)}
+.stat .l{font-size:12px;color:var(--ink3)}
+.sec-title{font-size:15px;font-weight:600;margin:20px 0 10px;padding-left:9px;border-left:3px solid var(--red)}
+/* modal */
+.mask{position:fixed;inset:0;background:rgba(20,24,30,.45);display:none;z-index:100;align-items:flex-start;justify-content:center;padding:30px 14px;overflow-y:auto}
+.mask.on{display:flex}
+.modal{background:#fff;border-radius:12px;width:100%;max-width:640px;padding:20px 22px;box-shadow:0 12px 40px rgba(0,0,0,.2)}
+.modal h3{font-size:16px;margin-bottom:14px}
+.f-row{margin-bottom:12px}
+.f-row label{display:block;font-size:12px;color:var(--ink2);margin-bottom:4px}
+.f-2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.m-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:16px}
+/* detail drawer */
+.detail{background:#fff;border:1px solid var(--line);border-radius:10px;padding:18px 20px;box-shadow:var(--shadow);margin-bottom:14px}
+.detail h3{font-size:16px;margin-bottom:8px}
+.kv{display:grid;grid-template-columns:88px 1fr;gap:6px 12px;font-size:13px;margin:10px 0}
+.kv dt{color:var(--ink3)}.kv dd{white-space:pre-wrap;word-break:break-word}
+.review-item{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-bottom:8px;font-size:13px}
+.review-item .ri-head{display:flex;gap:8px;align-items:center;margin-bottom:4px;font-size:12px;color:var(--ink3)}
+.ver-item{border-left:3px solid var(--line);padding:6px 12px;margin-bottom:6px;font-size:13px}
+.toast{position:fixed;left:50%;bottom:34px;transform:translateX(-50%);background:rgba(20,24,30,.88);color:#fff;padding:9px 20px;border-radius:20px;font-size:13px;z-index:200;display:none}
+.toast.on{display:block}
+.ai-note{background:#fffbe6;border:1px solid #ffe58f;border-radius:10px;padding:14px 18px;font-size:13px;color:#5a4a00;margin-bottom:16px;line-height:1.8}
+.ai-note b{color:#874d00}
+footer{position:fixed;bottom:0;left:0;right:0;text-align:center;font-size:11px;color:var(--ink3);padding:5px;background:rgba(245,246,248,.9);backdrop-filter:blur(4px)}
+@media(max-width:640px){.f-2{grid-template-columns:1fr}.hd-sub{display:none}.grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <div class="hd-in">
+    <h1>📰 深度采写工作台</h1>
+    <span class="hd-sub">央广网民生频道 · 食品消费报道</span>
+    <div class="sync-wrap">
+      <span class="dot" id="syncDot"></span><span id="syncText">连接中…</span>
+      <button class="btn ghost sm" style="background:rgba(255,255,255,.15);border-color:rgba(255,255,255,.3);color:#fff" onclick="manualSync()">立即同步</button>
+    </div>
+  </div>
+  <nav id="nav">
+    <button data-tab="overview" class="on">总览</button>
+    <button data-tab="topics">选题库</button>
+    <button data-tab="materials">素材夹</button>
+    <button data-tab="sources">采访对象</button>
+    <button data-tab="drafts">稿件库</button>
+  </nav>
+</header>
+
+<main>
+  <div class="ai-note">💡 <b>和 AI 专家团配合用：</b>在 WorkBuddy 里对「深度采写工作台」专家团说"把今天的选题同步到工作台"或"把质检意见写进稿件库"，AI 产出的选题、素材、采访对象、质检意见会自动出现在这里。任何设备打开本页都是同一份数据。</div>
+
+  <!-- 总览 -->
+  <section class="tab on" id="tab-overview">
+    <div class="stat-row" id="statRow"></div>
+    <div class="sec-title">进行中的选题</div>
+    <div class="grid" id="ovActive"></div>
+    <div class="sec-title">最近更新</div>
+    <div class="grid" id="ovRecent"></div>
+  </section>
+
+  <!-- 选题库 -->
+  <section class="tab" id="tab-topics">
+    <div class="bar">
+      <h2>选题库</h2>
+      <div class="filters">
+        <select id="fTopicStatus" onchange="renderTopics()"><option value="">全部状态</option><option>候选</option><option>孵化中</option><option>采写中</option><option>已成稿</option><option>已发布</option><option>搁置</option></select>
+        <select id="fTopicField" onchange="renderTopics()"><option value="">全部领域</option><option>食品安全</option><option>消费维权</option><option>民生其他</option></select>
+      </div>
+      <button class="btn" onclick="openTopicForm()">＋ 新建选题</button>
+    </div>
+    <div class="grid" id="topicList"></div>
+  </section>
+
+  <!-- 素材夹 -->
+  <section class="tab" id="tab-materials">
+    <div class="bar">
+      <h2>素材夹</h2>
+      <div class="filters">
+        <select id="fMatTopic" onchange="renderMaterials()"><option value="">全部选题</option></select>
+        <select id="fMatType" onchange="renderMaterials()"><option value="">全部类型</option><option>政策文件</option><option>监管数据</option><option>裁判文书</option><option>媒体报道</option><option>专家观点</option><option>采访笔记</option><option>其他</option></select>
+      </div>
+      <button class="btn" onclick="openMatForm()">＋ 添加素材</button>
+    </div>
+    <div class="grid" id="matList"></div>
+  </section>
+
+  <!-- 采访对象 -->
+  <section class="tab" id="tab-sources">
+    <div class="bar">
+      <h2>采访对象库</h2>
+      <div class="filters">
+        <select id="fSrcPri" onchange="renderSources()"><option value="">全部优先级</option><option>必采</option><option>应采</option><option>可选</option></select>
+        <select id="fSrcStatus" onchange="renderSources()"><option value="">全部进度</option><option>待联系</option><option>已联系</option><option>已采访</option></select>
+      </div>
+      <button class="btn" onclick="openSrcForm()">＋ 添加对象</button>
+    </div>
+    <div class="grid" id="srcList"></div>
+  </section>
+
+  <!-- 稿件库 -->
+  <section class="tab" id="tab-drafts">
+    <div class="bar">
+      <h2>稿件库</h2>
+      <div class="filters">
+        <select id="fDraftStatus" onchange="renderDrafts()"><option value="">全部状态</option><option>大纲</option><option>初稿</option><option>改稿中</option><option>待终审</option><option>已发布</option></select>
+      </div>
+      <button class="btn" onclick="openDraftForm()">＋ 新建稿件</button>
+    </div>
+    <div id="draftList"></div>
+  </section>
+</main>
+
+<footer>深度采写工作台 · build <span id="buildVer"></span> · 数据云端同步 · 本地自动缓存</footer>
+<div class="mask" id="mask" onclick="if(event.target===this)closeModal()"><div class="modal" id="modalBox"></div></div>
+<div class="toast" id="toast"></div>
+
+<script>
+const BUILD='2026.10.15-b01';
+const API='https://yulin-scale-sync.onrender.com';
+const ROOM='caixie2026';
+const LSKEY='shendu-workbench-cache';
+const LS_SAVEDAT='shendu-workbench-savedat';
+
+// ---------- 数据 ----------
+let DB={topics:[],materials:[],sources:[],drafts:[],reviews:[]};
+let cloudSavedAt=0;          // 我们已知的云端版本时间
+let dirty=false, saveTimer=null, online=false;
+
+const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
+const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmtD=t=>{if(!t)return'';const d=new Date(t);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');};
+const fmtDT=t=>{if(!t)return'';const d=new Date(t);return fmtD(t)+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');};
+const cnLen=s=>(String(s||'').replace(/\s/g,'')).length;
+
+function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('on');clearTimeout(t._tm);t._tm=setTimeout(()=>t.classList.remove('on'),2200);}
+function setSync(state,txt){const d=document.getElementById('syncDot');d.className='dot'+(state?' '+state:'');document.getElementById('syncText').textContent=txt;}
+
+// ---------- 同步 ----------
+async function loadCloud(){
+  setSync('saving','连接中…');
+  try{
+    const r=await fetch(API+'/api/load/'+ROOM,{signal:AbortSignal.timeout(60000)});
+    if(r.status===404){online=true;setSync('','已连接 · 首次使用');restoreLocal();renderAll();return;}
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    const savedAt=parseInt(r.headers.get('X-Saved-At')||'0',10)||0;
+    const data=await r.json();
+    const localAt=parseInt(localStorage.getItem(LS_SAVEDAT)||'0',10)||0;
+    if(savedAt>=localAt||!localStorage.getItem(LSKEY)){
+      DB=normalize(data);cloudSavedAt=savedAt;cacheLocal(savedAt);
+    }else{
+      restoreLocal(); // 本地更新（离线改过），保持本地，稍后备份上传
+      dirty=true;scheduleSave();
+    }
+    online=true;setSync('','已同步 '+fmtDT(cloudSavedAt||Date.now()));renderAll();
+  }catch(e){
+    online=false;setSync('off','离线 · 用本地缓存');restoreLocal();renderAll();
+  }
+}
+function restoreLocal(){
+  try{const s=localStorage.getItem(LSKEY);if(s){DB=normalize(JSON.parse(s));}}catch(e){}
+}
+function cacheLocal(savedAt){
+  try{localStorage.setItem(LSKEY,JSON.stringify(DB));if(savedAt)localStorage.setItem(LS_SAVEDAT,String(savedAt));}catch(e){}
+}
+function normalize(d){
+  d=d&&typeof d==='object'?d:{};
+  return{topics:d.topics||[],materials:d.materials||[],sources:d.sources||[],drafts:d.drafts||[],reviews:d.reviews||[]};
+}
+function markDirty(){dirty=true;cloudSavedAt=cloudSavedAt||0;cacheLocal();scheduleSave();renderAll();}
+function scheduleSave(){clearTimeout(saveTimer);saveTimer=setTimeout(saveCloud,1500);}
+async function saveCloud(force){
+  if(!dirty&&!force)return;
+  setSync('saving','同步中…');
+  try{
+    const u=API+'/api/save?id='+ROOM+'&base='+cloudSavedAt+(force?'&force=1':'');
+    const r=await fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(DB),signal:AbortSignal.timeout(60000)});
+    if(r.status===409){
+      setSync('err','冲突：云端有更新');
+      if(confirm('另一台设备（或 AI）刚更新过云端数据。\n\n点「确定」= 拉取云端最新（放弃本机未上传改动）\n点「取消」= 保留本机内容并强制覆盖云端')){
+        dirty=false;loadCloud();
+      }else{saveCloud(true);}
+      return;
+    }
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    const j=await r.json();
+    cloudSavedAt=j.savedAt||Date.now();dirty=false;online=true;
+    cacheLocal(cloudSavedAt);
+    setSync('','已同步 '+fmtDT(cloudSavedAt));
+  }catch(e){online=false;setSync('err','同步失败 · 已存本机，联网后自动补传');scheduleSave();}
+}
+function manualSync(){if(dirty){saveCloud();}else{loadCloud();}}
+setInterval(()=>{if(dirty&&online!==false)saveCloud();},30000);
+window.addEventListener('beforeunload',()=>{if(dirty&&navigator.sendBeacon){navigator.sendBeacon(API+'/api/save?id='+ROOM+'&force=1',new Blob([JSON.stringify(DB)],{type:'application/json'}));}});
+
+// ---------- 导航 ----------
+document.getElementById('nav').addEventListener('click',e=>{
+  const b=e.target.closest('button');if(!b)return;
+  document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('on',x===b));
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('on',t.id==='tab-'+b.dataset.tab));
+  renderAll();
+});
+
+// ---------- 弹窗 ----------
+function openModal(html){document.getElementById('modalBox').innerHTML=html;document.getElementById('mask').classList.add('on');}
+function closeModal(){document.getElementById('mask').classList.remove('on');}
+function val(id){const el=document.getElementById(id);return el?el.value.trim():'';}
+function selVal(id){return val(id);}
+
+// ---------- 选题 ----------
+const TOPIC_FLOW=['候选','孵化中','采写中','已成稿','已发布'];
+function topicById(id){return DB.topics.find(t=>t.id===id);}
+function openTopicForm(t){
+  t=t||{};
+  openModal(`<h3>${t.id?'编辑选题':'新建选题'}</h3>
+  <div class="f-row"><label>选题标题 *</label><input type="text" id="tf_title" value="${esc(t.title||'')}" placeholder="例：预制菜添加剂标注乱象调查"></div>
+  <div class="f-2"><div class="f-row"><label>领域</label><select id="tf_field"><option ${t.field==='食品安全'?'selected':''}>食品安全</option><option ${t.field==='消费维权'?'selected':''}>消费维权</option><option ${t.field==='民生其他'?'selected':''}>民生其他</option></select></div>
+  <div class="f-row"><label>价值评分（1-5）</label><input type="number" id="tf_score" min="1" max="5" value="${t.score||4}"></div></div>
+  <div class="f-row"><label>推荐理由（为什么值得做深度）</label><textarea id="tf_reason" placeholder="深度操作空间在哪里？">${esc(t.reason||'')}</textarea></div>
+  <div class="f-row"><label>操作角度</label><textarea id="tf_angle" placeholder="从哪个切口进入？">${esc(t.angle||'')}</textarea></div>
+  <div class="f-2"><div class="f-row"><label>线索来源</label><input type="text" id="tf_source" value="${esc(t.source||'')}" placeholder="监管通报 / 读者报料 / 竞品…"></div>
+  <div class="f-row"><label>竞品动态</label><input type="text" id="tf_competitor" value="${esc(t.competitor||'')}" placeholder="绿松鼠/民生调查局是否已做"></div></div>
+  <div class="f-row"><label>备注</label><textarea id="tf_notes">${esc(t.notes||'')}</textarea></div>
+  <div class="m-actions"><button class="btn ghost" onclick="closeModal()">取消</button><button class="btn" onclick="saveTopic('${t.id||''}')">保存</button></div>`);
+}
+function saveTopic(id){
+  const title=val('tf_title');if(!title){toast('标题必填');return;}
+  let t=id?topicById(id):null;
+  if(!t){t={id:uid(),status:'候选',createdAt:Date.now()};DB.topics.unshift(t);}
+  Object.assign(t,{title,field:selVal('tf_field'),score:parseInt(val('tf_score'))||4,reason:val('tf_reason'),angle:val('tf_angle'),source:val('tf_source'),competitor:val('tf_competitor'),notes:val('tf_notes'),updatedAt:Date.now()});
+  closeModal();markDirty();toast('已保存');
+}
+function setTopicStatus(id,st){const t=topicById(id);if(!t)return;t.status=st;t.updatedAt=Date.now();markDirty();}
+function delTopic(id){
+  const t=topicById(id);if(!t)return;
+  const mc=DB.materials.filter(m=>m.topicId===id).length;
+  if(!confirm(`删除选题「${t.title}」？${mc?'\n注意：它下面还有 '+mc+' 条素材（素材会保留但失去关联）。':''}`))return;
+  DB.topics=DB.topics.filter(x=>x.id!==id);markDirty();toast('已删除');
+}
+function topicCard(t,compact){
+  const stars='★'.repeat(t.score||0)+'☆'.repeat(5-(t.score||0));
+  const matN=DB.materials.filter(m=>m.topicId===t.id).length;
+  return `<div class="card">
+    <h3>${esc(t.title)}</h3>
+    <div class="meta"><span class="tag t-field">${esc(t.field||'')}</span><span class="badge st-${esc(t.status)}">${esc(t.status)}</span><span class="score">${stars}</span><span class="tag t-date">${fmtD(t.updatedAt||t.createdAt)}</span></div>
+    ${t.reason?`<div class="desc"><b>为什么做：</b>${esc(t.reason)}</div>`:''}
+    ${t.angle?`<div class="desc"><b>角度：</b>${esc(t.angle)}</div>`:''}
+    <div class="meta">${t.source?`<span>线索：${esc(t.source)}</span>`:''}${t.competitor?`<span>竞品：${esc(t.competitor)}</span>`:''}<span>素材 ${matN} 条</span></div>
+    ${compact?'':`<div class="actions">
+      ${TOPIC_FLOW.map(s=>t.status!==s&&t.status!=='搁置'?`<button class="link-btn" onclick="setTopicStatus('${t.id}','${s}')">${s}</button>`:'').join('')}
+      ${t.status!=='搁置'?`<button class="link-btn" onclick="setTopicStatus('${t.id}','搁置')">搁置</button>`:`<button class="link-btn" onclick="setTopicStatus('${t.id}','候选')">恢复</button>`}
+      <span style="flex:1"></span>
+      <button class="link-btn" onclick='openTopicForm(${JSON.stringify(t).replace(/'/g,"&#39;")})'>编辑</button>
+      <button class="link-btn danger" onclick="delTopic('${t.id}')">删除</button>
+    </div>`}
+  </div>`;
+}
+function renderTopics(){
+  const fs=val('fTopicStatus'),ff=val('fTopicField');
+  const list=DB.topics.filter(t=>(!fs||t.status===fs)&&(!ff||t.field===ff));
+  document.getElementById('topicList').innerHTML=list.length?list.map(t=>topicCard(t)).join(''):
+    `<div class="empty" style="grid-column:1/-1"><b>还没有选题</b>点右上角「新建选题」，或在 WorkBuddy 里让 AI「把今天的深度选题同步到工作台」</div>`;
+}
+
+// ---------- 素材 ----------
+const MAT_TYPES=['政策文件','监管数据','裁判文书','媒体报道','专家观点','采访笔记','其他'];
+function openMatForm(m){
+  m=m||{};
+  const tOpts=DB.topics.map(t=>`<option value="${t.id}" ${m.topicId===t.id?'selected':''}>${esc(t.title)}</option>`).join('');
+  openModal(`<h3>${m.id?'编辑素材':'添加素材'}</h3>
+  <div class="f-row"><label>标题 *</label><input type="text" id="mf_title" value="${esc(m.title||'')}" placeholder="例：市场监管总局2026年第X期食品抽检通告"></div>
+  <div class="f-2"><div class="f-row"><label>关联选题</label><select id="mf_topic"><option value="">（不关联）</option>${tOpts}</select></div>
+  <div class="f-row"><label>类型</label><select id="mf_type">${MAT_TYPES.map(x=>`<option ${m.type===x?'selected':''}>${x}</option>`).join('')}</select></div></div>
+  <div class="f-row"><label>摘要 *（关键信息、数据、可用在稿子里的点）</label><textarea id="mf_summary" style="min-height:100px">${esc(m.summary||'')}</textarea></div>
+  <div class="f-2"><div class="f-row"><label>来源（机构/媒体+文件名）</label><input type="text" id="mf_source" value="${esc(m.source||'')}" placeholder="例：市场监管总局官网"></div>
+  <div class="f-row"><label>发布日期</label><input type="date" id="mf_date" value="${esc(m.date||'')}"></div></div>
+  <div class="f-row"><label>链接</label><input type="url" id="mf_url" value="${esc(m.url||'')}" placeholder="https://…"></div>
+  <div class="m-actions"><button class="btn ghost" onclick="closeModal()">取消</button><button class="btn" onclick="saveMat('${m.id||''}')">保存</button></div>`);
+}
+function saveMat(id){
+  const title=val('mf_title'),summary=val('mf_summary');
+  if(!title||!summary){toast('标题和摘要必填');return;}
+  let m=id?DB.materials.find(x=>x.id===id):null;
+  if(!m){m={id:uid(),createdAt:Date.now()};DB.materials.unshift(m);}
+  Object.assign(m,{title,summary,topicId:val('mf_topic'),type:selVal('mf_type'),source:val('mf_source'),date:val('mf_date'),url:val('mf_url')});
+  closeModal();markDirty();toast('已保存');
+}
+function delMat(id){if(!confirm('删除这条素材？'))return;DB.materials=DB.materials.filter(x=>x.id!==id);markDirty();}
+function renderMaterials(){
+  const ft=val('fMatTopic'),fy=val('fMatType');
+  const sel=document.getElementById('fMatTopic');
+  const cur=sel.value;
+  sel.innerHTML='<option value="">全部选题</option>'+DB.topics.map(t=>`<option value="${t.id}">${esc(t.title)}</option>`).join('');
+  sel.value=cur;
+  const list=DB.materials.filter(m=>(!ft||m.topicId===ft)&&(!fy||m.type===fy));
+  document.getElementById('matList').innerHTML=list.length?list.map(m=>{
+    const tp=topicById(m.topicId);
+    return `<div class="card">
+      <h3>${m.url?`<a href="${esc(m.url)}" target="_blank" rel="noopener">${esc(m.title)} 🔗</a>`:esc(m.title)}</h3>
+      <div class="meta"><span class="tag t-type">${esc(m.type||'')}</span>${tp?`<span class="tag t-field">${esc(tp.title.slice(0,14))}${tp.title.length>14?'…':''}</span>`:''}${m.date?`<span class="tag t-date">${esc(m.date)}</span>`:''}</div>
+      <div class="desc">${esc(m.summary)}</div>
+      <div class="meta">${m.source?`<span>来源：${esc(m.source)}</span>`:''}</div>
+      <div class="actions"><span style="flex:1"></span>
+        <button class="link-btn" onclick='openMatForm(${JSON.stringify(m).replace(/'/g,"&#39;")})'>编辑</button>
+        <button class="link-btn danger" onclick="delMat('${m.id}')">删除</button></div>
+    </div>`;}).join(''):
+    `<div class="empty" style="grid-column:1/-1"><b>素材夹是空的</b>每条素材都带来源和日期，写作时随取随用、事实可溯源</div>`;
+}
+
+// ---------- 采访对象 ----------
+function openSrcForm(s){
+  s=s||{};
+  openModal(`<h3>${s.id?'编辑采访对象':'添加采访对象'}</h3>
+  <div class="f-2"><div class="f-row"><label>姓名/机构名 *</label><input type="text" id="sf_name" value="${esc(s.name||'')}" placeholder="例：王×× / 中消协"></div>
+  <div class="f-row"><label>身份头衔</label><input type="text" id="sf_role" value="${esc(s.role||'')}" placeholder="例：食品科学教授 / 消费维权律师"></div></div>
+  <div class="f-row"><label>所属机构</label><input type="text" id="sf_org" value="${esc(s.org||'')}" placeholder="例：中国农业大学食品学院"></div>
+  <div class="f-2"><div class="f-row"><label>擅长领域（逗号分隔）</label><input type="text" id="sf_fields" value="${esc((s.fields||[]).join('，'))}" placeholder="食品添加剂，标准制定"></div>
+  <div class="f-row"><label>适配选题</label><input type="text" id="sf_fit" value="${esc(s.fitTopics||'')}" placeholder="适合聊什么题"></div></div>
+  <div class="f-row"><label>为什么采 TA / 能提供什么独家信息</label><textarea id="sf_why">${esc(s.why||'')}</textarea></div>
+  <div class="f-row"><label>立场提示（可能的偏向，采访时注意）</label><textarea id="sf_stance">${esc(s.stance||'')}</textarea></div>
+  <div class="f-row"><label>过往公开观点（附来源日期）</label><textarea id="sf_quotes">${esc(s.quotes||'')}</textarea></div>
+  <div class="f-row"><label>联系路径（公开渠道）</label><input type="text" id="sf_contact" value="${esc(s.contact||'')}" placeholder="机构官网媒体联络邮箱 / 总机转…"></div>
+  <div class="f-2"><div class="f-row"><label>优先级</label><select id="sf_pri"><option ${s.priority==='必采'?'selected':''}>必采</option><option ${s.priority==='应采'?'selected':''}>应采</option><option ${s.priority==='可选'?'selected':''}>可选</option></select></div>
+  <div class="f-row"><label>进度</label><select id="sf_status"><option ${s.status==='待联系'?'selected':''}>待联系</option><option ${s.status==='已联系'?'selected':''}>已联系</option><option ${s.status==='已采访'?'selected':''}>已采访</option></select></div></div>
+  <div class="m-actions"><button class="btn ghost" onclick="closeModal()">取消</button><button class="btn" onclick="saveSrc('${s.id||''}')">保存</button></div>`);
+}
+function saveSrc(id){
+  const name=val('sf_name');if(!name){toast('名称必填');return;}
+  let s=id?DB.sources.find(x=>x.id===id):null;
+  if(!s){s={id:uid(),createdAt:Date.now()};DB.sources.unshift(s);}
+  Object.assign(s,{name,role:val('sf_role'),org:val('sf_org'),fields:val('sf_fields').split(/[,，]/).map(x=>x.trim()).filter(Boolean),fitTopics:val('sf_fit'),why:val('sf_why'),stance:val('sf_stance'),quotes:val('sf_quotes'),contact:val('sf_contact'),priority:selVal('sf_pri'),status:selVal('sf_status')});
+  closeModal();markDirty();toast('已保存');
+}
+function delSrc(id){if(!confirm('删除这个采访对象？'))return;DB.sources=DB.sources.filter(x=>x.id!==id);markDirty();}
+function setSrcStatus(id,st){const s=DB.sources.find(x=>x.id===id);if(!s)return;s.status=st;markDirty();}
+function renderSources(){
+  const fp=val('fSrcPri'),fs=val('fSrcStatus');
+  const list=DB.sources.filter(s=>(!fp||s.priority===fp)&&(!fs||s.status===fs));
+  document.getElementById('srcList').innerHTML=list.length?list.map(s=>`<div class="card">
+    <h3>${esc(s.name)}</h3>
+    <div class="meta">${s.role?`<span>${esc(s.role)}</span>`:''}${s.org?`<span>· ${esc(s.org)}</span>`:''}</div>
+    <div class="meta"><span class="badge p-${esc(s.priority||'可选')}">${esc(s.priority||'可选')}</span><span class="tag t-type">${esc(s.status||'待联系')}</span>${(s.fields||[]).map(f=>`<span class="tag t-field">${esc(f)}</span>`).join('')}</div>
+    ${s.why?`<div class="desc"><b>为什么采：</b>${esc(s.why)}</div>`:''}
+    ${s.fitTopics?`<div class="meta">适配：${esc(s.fitTopics)}</div>`:''}
+    ${s.contact?`<div class="meta">联系：${esc(s.contact)}</div>`:''}
+    <div class="actions">
+      ${s.status!=='已联系'&&s.status!=='已采访'?`<button class="link-btn" onclick="setSrcStatus('${s.id}','已联系')">标记已联系</button>`:''}
+      ${s.status==='已联系'?`<button class="link-btn" onclick="setSrcStatus('${s.id}','已采访')">标记已采访</button>`:''}
+      <span style="flex:1"></span>
+      <button class="link-btn" onclick='openSrcForm(${JSON.stringify(s).replace(/'/g,"&#39;")})'>编辑</button>
+      <button class="link-btn danger" onclick="delSrc('${s.id}')">删除</button></div>
+  </div>`).join(''):
+  `<div class="empty" style="grid-column:1/-1"><b>采访对象库是空的</b>积累的每一个专家、律师、机构联系人，都是下次选题的弹药</div>`;
+}
+
+// ---------- 稿件库 ----------
+function openDraftForm(d){
+  d=d||{};
+  const tOpts=DB.topics.map(t=>`<option value="${t.id}" ${d.topicId===t.id?'selected':''}>${esc(t.title)}</option>`).join('');
+  openModal(`<h3>${d.id?'编辑稿件':'新建稿件'}</h3>
+  <div class="f-row"><label>稿件标题 *</label><input type="text" id="df_title" value="${esc(d.title||'')}"></div>
+  <div class="f-2"><div class="f-row"><label>关联选题</label><select id="df_topic"><option value="">（不关联）</option>${tOpts}</select></div>
+  <div class="f-row"><label>状态</label><select id="df_status">${['大纲','初稿','改稿中','待终审','已发布'].map(x=>`<option ${d.status===x?'selected':''}>${x}</option>`).join('')}</select></div></div>
+  <div class="m-actions"><button class="btn ghost" onclick="closeModal()">取消</button><button class="btn" onclick="saveDraft('${d.id||''}')">保存</button></div>`);
+}
+function saveDraft(id){
+  const title=val('df_title');if(!title){toast('标题必填');return;}
+  let d=id?DB.drafts.find(x=>x.id===id):null;
+  if(!d){d={id:uid(),versions:[],createdAt:Date.now()};DB.drafts.unshift(d);}
+  Object.assign(d,{title,topicId:val('df_topic'),status:selVal('df_status'),updatedAt:Date.now()});
+  closeModal();markDirty();toast('已保存');
+}
+function delDraft(id){
+  if(!confirm('删除这篇稿件及其所有版本？'))return;
+  DB.drafts=DB.drafts.filter(x=>x.id!==id);DB.reviews=DB.reviews.filter(r=>r.draftId!==id);markDirty();
+}
+function openVersionForm(did){
+  openModal(`<h3>存入新版本</h3>
+  <div class="f-row"><label>版本说明</label><input type="text" id="vf_note" placeholder="例：初稿 / 按质检意见修改后"></div>
+  <div class="f-row"><label>正文（粘贴全文）</label><textarea id="vf_content" style="min-height:220px" placeholder="把稿子全文粘贴到这里…"></textarea></div>
+  <div class="m-actions"><button class="btn ghost" onclick="closeModal()">取消</button><button class="btn" onclick="saveVersion('${did}')">存为版本</button></div>`);
+}
+function saveVersion(did){
+  const d=DB.drafts.find(x=>x.id===did);if(!d)return;
+  const content=document.getElementById('vf_content').value;
+  if(!content.trim()){toast('内容为空');return;}
+  d.versions.push({ver:d.versions.length+1,note:val('vf_note')||('版本 '+(d.versions.length+1)),content,createdAt:Date.now()});
+  d.updatedAt=Date.now();closeModal();markDirty();toast('已存版本 '+d.versions.length);
+}
+function viewVersion(did,ver){
+  const d=DB.drafts.find(x=>x.id===did);const v=d&&d.versions.find(x=>x.ver===ver);if(!v)return;
+  openModal(`<h3>${esc(d.title)} · v${v.ver} ${esc(v.note||'')}</h3>
+  <div class="meta" style="margin-bottom:8px">${fmtDT(v.createdAt)} · 约 ${cnLen(v.content)} 字</div>
+  <div style="max-height:60vh;overflow-y:auto;white-space:pre-wrap;font-size:14px;line-height:1.9;border:1px solid var(--line);border-radius:8px;padding:14px">${esc(v.content)}</div>
+  <div class="m-actions"><button class="btn ghost" onclick="copyText('','${did}',${v.ver});return false">复制全文</button><button class="btn" onclick="closeModal()">关闭</button></div>`);
+}
+function copyText(_,did,ver){
+  const d=DB.drafts.find(x=>x.id===did);const v=d&&d.versions.find(x=>x.ver===ver);
+  if(v){navigator.clipboard.writeText(v.content).then(()=>toast('已复制')).catch(()=>toast('复制失败'));}
+}
+function draftReviews(did){return DB.reviews.filter(r=>r.draftId===did);}
+function renderDrafts(){
+  const fs=val('fDraftStatus');
+  const list=DB.drafts.filter(d=>!fs||d.status===fs);
+  const box=document.getElementById('draftList');
+  if(!list.length){box.innerHTML=`<div class="empty"><b>稿件库是空的</b>AI 主笔的初稿、你的修改版本、质检意见都会归档在这里</div>`;return;}
+  box.innerHTML=list.map(d=>{
+    const tp=topicById(d.topicId);
+    const lastV=d.versions[d.versions.length-1];
+    const revs=draftReviews(d.id);
+    const lastRev=revs[0];
+    return `<div class="detail">
+      <h3>${esc(d.title)}</h3>
+      <div class="meta"><span class="badge st-${esc(d.status==='已发布'?'已发布':d.status==='待终审'?'已成稿':'采写中')}">${esc(d.status)}</span>
+      ${tp?`<span class="tag t-field">${esc(tp.title.slice(0,16))}${tp.title.length>16?'…':''}</span>`:''}
+      <span class="tag t-date">更新 ${fmtD(d.updatedAt||d.createdAt)}</span>
+      ${lastV?`<span class="tag t-date">v${lastV.ver} · 约 ${cnLen(lastV.content)} 字</span>`:'<span class="tag t-date">暂无正文版本</span>'}</div>
+      <div class="actions" style="border:0;padding-top:2px">
+        <button class="btn sm" onclick="openVersionForm('${d.id}')">＋ 存入新版本</button>
+        ${d.versions.map(v=>`<button class="link-btn" onclick="viewVersion('${d.id}',${v.ver})">v${v.ver} ${esc((v.note||'').slice(0,10))}</button>`).join('')}
+        <span style="flex:1"></span>
+        <button class="link-btn" onclick='openDraftForm(${JSON.stringify(d).replace(/'/g,"&#39;")})'>编辑</button>
+        <button class="link-btn danger" onclick="delDraft('${d.id}')">删除</button>
+      </div>
+      ${lastRev?`<div style="margin-top:10px"><div class="meta" style="margin-bottom:6px">最新质检（${fmtDT(lastRev.createdAt)}）：${esc(lastRev.summary||'')}</div>
+        ${lastRev.items.slice(0,20).map(it=>`<div class="review-item"><div class="ri-head"><span class="badge lv-${esc(it.level)}">${esc(it.level)}</span><span>${esc(it.location||'')}</span></div>
+          <div><b>问题：</b>${esc(it.problem||'')}</div><div><b>理由：</b>${esc(it.reason||'')}</div><div><b>建议：</b>${esc(it.suggestion||'')}</div></div>`).join('')}
+        ${(lastRev.factChecks&&lastRev.factChecks.length)?`<div class="meta" style="margin:6px 0">事实核查：</div>`+lastRev.factChecks.map(fc=>`<div class="review-item"><div class="ri-head"><span class="badge v-${esc(fc.verdict)}">${esc(fc.verdict)}</span></div><div>${esc(fc.claim||'')}</div><div class="meta">依据：${esc(fc.basis||'')}</div></div>`).join(''):''}
+      </div>`:'<div class="meta" style="margin-top:6px">还没有质检意见——在 WorkBuddy 里让 AI「质检这篇稿子并写进稿件库」即可</div>'}
+    </div>`;}).join('');
+}
+
+// ---------- 总览 ----------
+function renderOverview(){
+  const active=DB.topics.filter(t=>['孵化中','采写中'].includes(t.status));
+  const revs=DB.reviews.length;
+  document.getElementById('statRow').innerHTML=[
+    ['候选选题',DB.topics.filter(t=>t.status==='候选').length],
+    ['进行中',active.length],
+    ['素材',DB.materials.length],
+    ['采访对象',DB.sources.length],
+    ['稿件',DB.drafts.length],
+    ['质检记录',revs]
+  ].map(([l,n])=>`<div class="stat"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('');
+  document.getElementById('ovActive').innerHTML=active.length?active.map(t=>topicCard(t,true)).join(''):`<div class="empty" style="grid-column:1/-1"><b>暂无进行中的选题</b>把候选选题推进到「孵化中」就会出现在这里</div>`;
+  const recent=[...DB.topics].sort((a,b)=>(b.updatedAt||b.createdAt)-(a.updatedAt||a.createdAt)).slice(0,4);
+  document.getElementById('ovRecent').innerHTML=recent.length?recent.map(t=>topicCard(t,true)).join(''):`<div class="empty" style="grid-column:1/-1"><b>欢迎使用深度采写工作台</b>从「选题库」新建第一个选题开始</div>`;
+}
+
+// ---------- 数据导入导出 ----------
+function exportJSON(){
+  const blob=new Blob([JSON.stringify(DB,null,2)],{type:'application/json'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);
+  a.download='深度采写工作台-'+fmtD(Date.now())+'.json';a.click();toast('已导出');
+}
+
+// ---------- 渲染 ----------
+function renderAll(){renderOverview();renderTopics();renderMaterials();renderSources();renderDrafts();}
+
+document.getElementById('buildVer').textContent=BUILD;
+loadCloud();
+</script>
+</body>
+</html>
