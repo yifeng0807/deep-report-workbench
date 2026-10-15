@@ -204,7 +204,7 @@ footer{position:fixed;bottom:0;left:0;right:0;text-align:center;font-size:11px;c
 <div class="toast" id="toast"></div>
 
 <script>
-const BUILD='2026.10.15-b11';
+const BUILD='2026.10.15-b12';
 const API='https://yulin-scale-sync.onrender.com';
 const ROOM='caixie2026';
 const LSKEY='shendu-workbench-cache';
@@ -622,6 +622,19 @@ function exportJSON(){
 
 // ---------- 渲染 ----------
 function renderAll(){renderOverview();renderDaily();renderTopics();renderMaterials();renderSources();renderDrafts();}
+
+// ---------- Ctrl+S / Cmd+S 保存 ----------
+document.addEventListener('keydown',e=>{
+  if(!(e.ctrlKey||e.metaKey)||(e.key!=='s'&&e.key!=='S'))return;
+  e.preventDefault();
+  const mask=document.getElementById('mask');
+  if(mask&&mask.classList.contains('on')){
+    const saveBtn=mask.querySelector('.m-actions button.btn:not(.ghost)');
+    if(saveBtn){saveBtn.click();if(dirty)saveCloud();}
+    else{toast('当前弹窗无可保存内容');}
+  }else if(dirty){saveCloud();toast('已保存到云端');}
+  else{toast('没有待保存的改动');}
+});
 
 document.getElementById('buildVer').textContent=BUILD;
 loadCloud();
