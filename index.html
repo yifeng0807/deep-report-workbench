@@ -80,6 +80,7 @@ textarea{resize:vertical;min-height:70px}
 .grp-head{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;color:var(--ink2);margin:14px 0 8px}
 .grp-icon{font-size:15px}
 .grp-n{font-size:12px;color:var(--ink3);font-weight:400}
+.sc-律师{background:#eaf1f5;color:#4a6f8a}.sc-学者{background:#efeaf7;color:#6b5b95}.sc-行业专家{background:#eef5f0;color:#4a9a6b}.sc-医生{background:#f6ece9;color:#a8675a}.sc-监管官员{background:#f0f2f4;color:#5a6472}.sc-消协组织{background:#f6f2e9;color:#b8860b}.sc-企业方{background:#e8f4f4;color:#3d8b8b}.sc-其他{background:#f4f5f7;color:#7a858e}
 /* modal */
 .mask{position:fixed;inset:0;background:rgba(20,24,30,.45);display:none;z-index:100;align-items:flex-start;justify-content:center;padding:30px 14px;overflow-y:auto}
 .mask.on{display:flex}
@@ -184,12 +185,13 @@ footer{position:fixed;bottom:0;left:0;right:0;text-align:center;font-size:11px;c
     <div class="bar">
       <h2>采访对象库</h2>
       <div class="filters">
+        <select id="fSrcCat" onchange="renderSources()"><option value="">全部身份</option><option>律师</option><option>学者</option><option>行业专家</option><option>医生</option><option>监管官员</option><option>消协组织</option><option>企业方</option><option>其他</option></select>
         <select id="fSrcPri" onchange="renderSources()"><option value="">全部优先级</option><option>必采</option><option>应采</option><option>可选</option></select>
         <select id="fSrcStatus" onchange="renderSources()"><option value="">全部进度</option><option>待联系</option><option>已联系</option><option>已采访</option></select>
       </div>
       <button class="btn" onclick="openSrcForm()">＋ 添加对象</button>
     </div>
-    <div class="grid" id="srcList"></div>
+    <div id="srcList"></div>
   </section>
 
   <!-- 稿件库 -->
@@ -210,7 +212,7 @@ footer{position:fixed;bottom:0;left:0;right:0;text-align:center;font-size:11px;c
 <div class="toast" id="toast"></div>
 
 <script>
-const BUILD='2026.10.15-b14';
+const BUILD='2026.10.15-b15';
 const API='https://yulin-scale-sync.onrender.com';
 const ROOM='caixie2026';
 const LSKEY='shendu-workbench-cache';
@@ -422,12 +424,15 @@ function renderMaterials(){
 }
 
 // ---------- 采访对象 ----------
+const SRC_CATS=['律师','学者','行业专家','医生','监管官员','消协组织','企业方','其他'];
+const SRC_ICON={'律师':'⚖️','学者':'🎓','行业专家':'🔬','医生':'🩺','监管官员':'🏛','消协组织':'🛡','企业方':'🏢','其他':'👤'};
 function openSrcForm(s){
   s=s||{};
   _draftKey='src-'+(s.id||'new');
   openModal(`<h3>${s.id?'编辑采访对象':'添加采访对象'}</h3>
   <div class="f-2"><div class="f-row"><label>姓名/机构名 *</label><input type="text" id="sf_name" value="${esc(s.name||'')}" placeholder="例：王×× / 中消协"></div>
-  <div class="f-row"><label>身份头衔</label><input type="text" id="sf_role" value="${esc(s.role||'')}" placeholder="例：食品科学教授 / 消费维权律师"></div></div>
+  <div class="f-row"><label>身份类型</label><select id="sf_cat">${SRC_CATS.map(x=>`<option ${s.category===x?'selected':''}>${x}</option>`).join('')}</select></div></div>
+  <div class="f-row"><label>身份头衔</label><input type="text" id="sf_role" value="${esc(s.role||'')}" placeholder="例：食品科学教授 / 消费维权律师"></div>
   <div class="f-row"><label>所属机构</label><input type="text" id="sf_org" value="${esc(s.org||'')}" placeholder="例：中国农业大学食品学院"></div>
   <div class="f-2"><div class="f-row"><label>擅长领域（逗号分隔）</label><input type="text" id="sf_fields" value="${esc((s.fields||[]).join('，'))}" placeholder="食品添加剂，标准制定"></div>
   <div class="f-row"><label>适配选题</label><input type="text" id="sf_fit" value="${esc(s.fitTopics||'')}" placeholder="适合聊什么题"></div></div>
@@ -443,17 +448,28 @@ function saveSrc(id){
   const name=val('sf_name');if(!name){toast('名称必填');return;}
   let s=id?DB.sources.find(x=>x.id===id):null;
   if(!s){s={id:uid(),createdAt:Date.now()};DB.sources.unshift(s);}
-  Object.assign(s,{name,role:val('sf_role'),org:val('sf_org'),fields:val('sf_fields').split(/[,，]/).map(x=>x.trim()).filter(Boolean),fitTopics:val('sf_fit'),why:val('sf_why'),stance:val('sf_stance'),quotes:val('sf_quotes'),contact:val('sf_contact'),priority:selVal('sf_pri'),status:selVal('sf_status')});
+  Object.assign(s,{name,category:selVal('sf_cat'),role:val('sf_role'),org:val('sf_org'),fields:val('sf_fields').split(/[,，]/).map(x=>x.trim()).filter(Boolean),fitTopics:val('sf_fit'),why:val('sf_why'),stance:val('sf_stance'),quotes:val('sf_quotes'),contact:val('sf_contact'),priority:selVal('sf_pri'),status:selVal('sf_status')});
   clearDraft('src-'+(id||'new'));closeModal();markDirty();toast('已保存');
 }
 function delSrc(id){if(!confirm('删除这个采访对象？'))return;DB.sources=DB.sources.filter(x=>x.id!==id);markDirty();}
 function setSrcStatus(id,st){const s=DB.sources.find(x=>x.id===id);if(!s)return;s.status=st;markDirty();}
 function renderSources(){
-  const fp=val('fSrcPri'),fs=val('fSrcStatus');
-  const list=DB.sources.filter(s=>(!fp||s.priority===fp)&&(!fs||s.status===fs));
-  document.getElementById('srcList').innerHTML=list.length?list.map(s=>`<div class="card">
+  const fp=val('fSrcPri'),fs=val('fSrcStatus'),fc=val('fSrcCat');
+  const all=DB.sources.filter(s=>(!fp||s.priority===fp)&&(!fs||s.status===fs));
+  const box=document.getElementById('srcList');
+  if(!all.length){box.innerHTML=`<div class="empty"><b>采访对象库是空的</b>按身份类型积累专家、律师、机构联系人，都是下次选题的弹药</div>`;return;}
+  const cats=fc?[fc]:SRC_CATS;
+  box.innerHTML=cats.map(c=>{
+    const items=all.filter(s=>(s.category||'其他')===c);
+    if(!items.length)return '';
+    return `<div class="grp-head"><span class="grp-icon">${SRC_ICON[c]||'👤'}</span>${esc(c)}<span class="grp-n">${items.length} 人</span></div>`+
+      `<div class="grid" style="margin-bottom:14px">${items.map(srcCard).join('')}</div>`;
+  }).join('');
+}
+function srcCard(s){
+  return `<div class="card">
     <h3>${esc(s.name)}</h3>
-    <div class="meta">${s.role?`<span>${esc(s.role)}</span>`:''}${s.org?`<span>· ${esc(s.org)}</span>`:''}</div>
+    <div class="meta"><span class="badge sc-${esc(s.category||'其他')}">${esc(s.category||'其他')}</span>${s.role?`<span>${esc(s.role)}</span>`:''}${s.org?`<span>· ${esc(s.org)}</span>`:''}</div>
     <div class="meta"><span class="badge p-${esc(s.priority||'可选')}">${esc(s.priority||'可选')}</span><span class="tag t-type">${esc(s.status||'待联系')}</span>${(s.fields||[]).map(f=>`<span class="tag t-field">${esc(f)}</span>`).join('')}</div>
     ${s.why?`<div class="desc"><b>为什么采：</b>${esc(s.why)}</div>`:''}
     ${s.fitTopics?`<div class="meta">适配：${esc(s.fitTopics)}</div>`:''}
@@ -464,8 +480,7 @@ function renderSources(){
       <span style="flex:1"></span>
       <button class="link-btn" onclick='openSrcForm(${JSON.stringify(s).replace(/'/g,"&#39;")})'>编辑</button>
       <button class="link-btn danger" onclick="delSrc('${s.id}')">删除</button></div>
-  </div>`).join(''):
-  `<div class="empty" style="grid-column:1/-1"><b>采访对象库是空的</b>积累的每一个专家、律师、机构联系人，都是下次选题的弹药</div>`;
+  </div>`;
 }
 
 // ---------- 稿件库 ----------
