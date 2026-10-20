@@ -75,7 +75,7 @@ def date_range_str():
     return f"{start.strftime('%Y年%m月%d日')}至{end.strftime('%Y年%m月%d日')}"
 
 
-def http_json(url, data=None, method=None, headers=None, timeout=120):
+def http_json(url, data=None, method=None, headers=None, timeout=300):
     h = {"User-Agent": "deep-radar/1.0", "Content-Type": "application/json"}
     if headers:
         h.update(headers)
