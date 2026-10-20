@@ -17,7 +17,7 @@ import urllib.error
 
 API_KEY = os.environ.get("ZHIPU_API_KEY", "").strip()
 SEARCH_MODEL = (os.environ.get("ZHIPU_SEARCH_MODEL") or "glm-4-flash").strip()
-CHAT_MODEL = (os.environ.get("ZHIPU_MODEL") or "glm-4.5").strip()
+CHAT_MODEL = (os.environ.get("ZHIPU_MODEL") or "glm-4-flash").strip()
 GLM_URL = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
 
 SYNC_LOAD = "https://yulin-scale-sync.onrender.com/api/load/caixie2026"
@@ -39,10 +39,10 @@ MAX_DAILY = 30  # 每天最多条目数（硬性上限）
 # 整理阶段的系统提示（复用自动化筛选规则）
 SYSTEM_PROMPT = """你是央广网民生频道记者的选题助手，负责从"食品消费"领域的搜索结果中筛选整理出有价值的选题线索。
 
-【分类与数量】重点抓前三类，后两类只挑最关键。合计 15~30 条，严格不超过 30 条；尽量把有价值的线索都列全，确保总数达到 15 条以上，前三类每类尽量不少于 4 条：
+【分类与数量】重点抓前三类，后两类只挑最关键。合计约 20 条（18~22 条），严格不超过 30 条；尽量把有价值的线索都列全，前三类每类尽量不少于 5 条：
 1. 监管处罚/抽检通报（重点，6-10 条）：市监总局及各地市监局食品抽检不合格、行政处罚、召回、违法广告处罚；优先总局与省级发布。
-2. 消费骗局/欺骗手法（重点，4-8 条）：虚假宣传、套用认证、成分纯度虚标、欺诈套路、坑老会销等——最有深度调查价值，尽量抓全并标 deep=true。
-3. 大品牌投诉与舆情（重点，4-8 条）：知名品牌食安事件、投诉、集体维权、媒体曝光、热搜。
+2. 消费骗局/欺骗手法（重点，5-8 条）：虚假宣传、套用认证、成分纯度虚标、欺诈套路、坑老会销等——最有深度调查价值，尽量抓全并标 deep=true。
+3. 大品牌投诉与舆情（重点，5-8 条）：知名品牌食安事件、投诉、集体维权、媒体曝光、热搜。
 4. 法律法规（0-2 条）：只挑最关键——食品安全法修订、重要食品标准出台/征求意见、重大政策解读等，普通动态不收。
 5. 行业快讯（0-2 条）：只挑最关键——重大行业政策、标志性关店/财报事件等，普通财报关店上市人事不收。
 注意：第 4、5 两类（法律法规+行业快讯）合计不超过 3 条。
@@ -196,15 +196,19 @@ def main():
     dr = date_range_str()
     print(f"== 每日雷达抓取开始 日期={today} 范围={dr} 搜索={SEARCH_MODEL} 整理={CHAT_MODEL} ==")
 
-    # 1. 五大分类搜索
+    # 1. 五大分类搜索（网络失败自动重试）
     gathered = {}
     for cat, kw in CATEGORIES:
         q = f"近3天（{dr}）{kw}"
-        try:
-            txt = glm_search(q)
-        except Exception as e:
-            txt = ""
-            print(f"[搜索] {cat} 异常: {e}")
+        txt = ""
+        for attempt in range(2):
+            try:
+                txt = glm_search(q)
+                if txt:
+                    break
+            except Exception as e:
+                print(f"[搜索] {cat} 异常(第{attempt+1}次): {e}")
+                time.sleep(3)
         gathered[cat] = txt
         print(f"[搜索] {cat} 完成，返回 {len(txt)} 字")
 
@@ -213,23 +217,20 @@ def main():
     for cat, txt in gathered.items():
         user += f"\n=====【{cat}】=====\n{txt[:6000] if txt else '（无结果）'}\n"
 
-    items = glm_chat_json(SYSTEM_PROMPT, user)
-    if items is None:
-        print("ERROR: 整理阶段未能产出有效 JSON")
-        sys.exit(2)
-
-    cleaned = [n for n in (normalize(x) for x in items) if n]
-
-    # 条数太少则再整理一轮合并，保证覆盖
-    if len(cleaned) < 12:
-        items2 = glm_chat_json(SYSTEM_PROMPT, user)
-        if items2:
-            cleaned2 = [n for n in (normalize(x) for x in items2) if n]
-            seen = {x["title"] for x in cleaned}
-            for x in cleaned2:
-                if x["title"] not in seen:
-                    cleaned.append(x)
-                    seen.add(x["title"])
+    # 多轮整理合并（flash 快但单次波动大，多轮去重保证覆盖）
+    cleaned = []
+    seen = set()
+    for rnd in range(3):
+        items = glm_chat_json(SYSTEM_PROMPT, user)
+        if not items:
+            continue
+        for x in items:
+            n = normalize(x)
+            if n and n["title"] not in seen:
+                cleaned.append(n)
+                seen.add(n["title"])
+        if len(cleaned) >= 20:
+            break
 
     if len(cleaned) > MAX_DAILY:
         cleaned = cleaned[:MAX_DAILY]
