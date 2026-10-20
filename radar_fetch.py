@@ -244,8 +244,19 @@ def main():
             if n and n["title"] not in seen:
                 cleaned.append(n)
                 seen.add(n["title"])
-        if len(cleaned) >= 20:
+        if len(cleaned) >= 22:
             break
+
+    # 后两类（法律法规+行业快讯）合计不超过 3 条
+    limited = []
+    sec = 0
+    for it in cleaned:
+        if it["type"] in ("法律法规", "行业快讯"):
+            if sec >= 3:
+                continue
+            sec += 1
+        limited.append(it)
+    cleaned = limited
 
     if len(cleaned) > TARGET:
         cleaned = cleaned[:TARGET]
