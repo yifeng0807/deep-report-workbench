@@ -16,7 +16,8 @@ import urllib.request
 import urllib.error
 
 API_KEY = os.environ.get("ZHIPU_API_KEY", "").strip()
-MODEL = (os.environ.get("ZHIPU_MODEL") or "glm-4-flash").strip()
+SEARCH_MODEL = (os.environ.get("ZHIPU_SEARCH_MODEL") or "glm-4-flash").strip()
+CHAT_MODEL = (os.environ.get("ZHIPU_MODEL") or "glm-4.5").strip()
 GLM_URL = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
 
 SYNC_LOAD = "https://yulin-scale-sync.onrender.com/api/load/caixie2026"
@@ -38,7 +39,7 @@ MAX_DAILY = 30  # 每天最多条目数（硬性上限）
 # 整理阶段的系统提示（复用自动化筛选规则）
 SYSTEM_PROMPT = """你是央广网民生频道记者的选题助手，负责从"食品消费"领域的搜索结果中筛选整理出有价值的选题线索。
 
-【分类与数量】重点抓前三类，后两类只挑最关键，合计 15~30 条，严格不超过 30 条：
+【分类与数量】重点抓前三类，后两类只挑最关键。合计 15~30 条，严格不超过 30 条；尽量把有价值的线索都列全，确保总数达到 15 条以上，前三类每类尽量不少于 4 条：
 1. 监管处罚/抽检通报（重点，6-10 条）：市监总局及各地市监局食品抽检不合格、行政处罚、召回、违法广告处罚；优先总局与省级发布。
 2. 消费骗局/欺骗手法（重点，4-8 条）：虚假宣传、套用认证、成分纯度虚标、欺诈套路、坑老会销等——最有深度调查价值，尽量抓全并标 deep=true。
 3. 大品牌投诉与舆情（重点，4-8 条）：知名品牌食安事件、投诉、集体维权、媒体曝光、热搜。
@@ -89,7 +90,7 @@ def glm_search(query):
     messages = [{"role": "user", "content": "请联网搜索以下主题的最新新闻，逐条列出：标题、来源、日期、一句话要点。\n\n主题：" + query}]
     tools = [{"type": "web_search", "web_search": {"search_query": query}}]
     for _ in range(3):
-        payload = {"model": MODEL, "messages": messages, "tools": tools, "temperature": 0.3}
+        payload = {"model": SEARCH_MODEL, "messages": messages, "tools": tools, "temperature": 0.3}
         data, _ = http_json(GLM_URL, payload, headers={"Authorization": f"Bearer {API_KEY}"})
         msg = data["choices"][0]["message"]
         if msg.get("content"):
@@ -106,7 +107,7 @@ def glm_search(query):
 
 def glm_chat_json(system, user, retries=2):
     """纯文本整理，要求模型输出严格 JSON 数组。"""
-    payload = {"model": MODEL,
+    payload = {"model": CHAT_MODEL,
                "messages": [{"role": "system", "content": system},
                             {"role": "user", "content": user}],
                "temperature": 0.2}
@@ -193,7 +194,7 @@ def main():
 
     today = today_str()
     dr = date_range_str()
-    print(f"== 每日雷达抓取开始 日期={today} 范围={dr} 模型={MODEL} ==")
+    print(f"== 每日雷达抓取开始 日期={today} 范围={dr} 搜索={SEARCH_MODEL} 整理={CHAT_MODEL} ==")
 
     # 1. 五大分类搜索
     gathered = {}
@@ -218,9 +219,21 @@ def main():
         sys.exit(2)
 
     cleaned = [n for n in (normalize(x) for x in items) if n]
+
+    # 条数太少则再整理一轮合并，保证覆盖
+    if len(cleaned) < 12:
+        items2 = glm_chat_json(SYSTEM_PROMPT, user)
+        if items2:
+            cleaned2 = [n for n in (normalize(x) for x in items2) if n]
+            seen = {x["title"] for x in cleaned}
+            for x in cleaned2:
+                if x["title"] not in seen:
+                    cleaned.append(x)
+                    seen.add(x["title"])
+
     if len(cleaned) > MAX_DAILY:
         cleaned = cleaned[:MAX_DAILY]
-    print(f"[整理] 模型输出 {len(items)} 条，清洗后有效 {len(cleaned)} 条")
+    print(f"[整理] 清洗后有效 {len(cleaned)} 条")
 
     if not cleaned:
         print("WARN: 无有效条目，跳过写库")
