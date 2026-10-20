@@ -25,16 +25,32 @@ SYNC_SAVE = "https://yulin-scale-sync.onrender.com/api/save?id=caixie2026"
 
 TZ = datetime.timezone(datetime.timedelta(hours=8))
 
-# 五大分类及其搜索关键词（运行时拼接"近3天"日期范围）
+# 五大分类及其搜索关键词（每个分类多组关键词扩大覆盖，运行时拼接"近3天"日期范围）
 CATEGORIES = [
-    ("监管处罚", "市场监管总局 食品 抽检 不合格 通报 行政处罚 产品召回"),
-    ("法律法规", "食品安全法 食品标准 修订 征求意见 市场监管总局 卫健委 药监局"),
-    ("消费骗局", "食品 虚假宣传 欺诈 骗局 会销 坑老 私域直播 养生 查处"),
-    ("品牌舆情", "食品品牌 食品安全 投诉 曝光 异物 黑猫投诉 热搜"),
-    ("行业快讯", "食品饮料 企业 财报 关店 乳制品 餐饮 行业动态"),
+    ("监管处罚", [
+        "市场监管总局 食品 抽检 不合格 通报 处罚 召回",
+        "食品 抽检不合格 品牌 罚款 市监局 查处 最新",
+    ]),
+    ("法律法规", [
+        "食品安全法 食品标准 修订 征求意见 市场监管总局 卫健委",
+        "食品 新规 政策 发布 卫健委 市场监管总局",
+    ]),
+    ("消费骗局", [
+        "食品 虚假宣传 欺诈 骗局 会销 坑老 私域直播 查处",
+        "保健品 虚假宣传 直播带货 诈骗 老年人 案例",
+    ]),
+    ("品牌舆情", [
+        "食品品牌 食品安全 投诉 曝光 异物 黑猫投诉 热搜",
+        "食品 吃出 异物 品牌 道歉 回应 最新",
+    ]),
+    ("行业快讯", [
+        "食品饮料 企业 财报 关店 乳制品 餐饮 行业动态",
+        "食品 行业 政策 趋势 新规",
+    ]),
 ]
 
 MAX_DAILY = 30  # 每天最多条目数（硬性上限）
+TARGET = 20     # 每天目标条数
 
 # 整理阶段的系统提示（复用自动化筛选规则）
 SYSTEM_PROMPT = """你是央广网民生频道记者的选题助手，负责从"食品消费"领域的搜索结果中筛选整理出有价值的选题线索。
@@ -164,18 +180,13 @@ def load_cloud():
 def merge_into(cloud, day, items):
     arr = cloud.setdefault("daily", {}).setdefault(day, [])
     have_titles = {x.get("title") for x in arr}
-    have_urls = {x.get("url") for x in arr if x.get("url")}
     added = []
     for it in items:
         if it["title"] in have_titles:
             continue
-        if it["url"] and it["url"] in have_urls:
-            continue
         arr.insert(0, it)
         added.append(it)
         have_titles.add(it["title"])
-        if it["url"]:
-            have_urls.add(it["url"])
     if len(arr) > MAX_DAILY:
         arr[:] = arr[:MAX_DAILY]
     return added
@@ -196,21 +207,25 @@ def main():
     dr = date_range_str()
     print(f"== 每日雷达抓取开始 日期={today} 范围={dr} 搜索={SEARCH_MODEL} 整理={CHAT_MODEL} ==")
 
-    # 1. 五大分类搜索（网络失败自动重试）
+    # 1. 五大分类搜索（每个分类多组关键词 + 网络失败自动重试）
     gathered = {}
-    for cat, kw in CATEGORIES:
-        q = f"近3天（{dr}）{kw}"
-        txt = ""
-        for attempt in range(2):
-            try:
-                txt = glm_search(q)
-                if txt:
-                    break
-            except Exception as e:
-                print(f"[搜索] {cat} 异常(第{attempt+1}次): {e}")
-                time.sleep(3)
-        gathered[cat] = txt
-        print(f"[搜索] {cat} 完成，返回 {len(txt)} 字")
+    for cat, kws in CATEGORIES:
+        parts = []
+        for kw in kws:
+            q = f"近3天（{dr}）{kw}"
+            txt = ""
+            for attempt in range(2):
+                try:
+                    txt = glm_search(q)
+                    if txt:
+                        break
+                except Exception as e:
+                    print(f"[搜索] {cat} 异常(第{attempt+1}次): {e}")
+                    time.sleep(3)
+            if txt:
+                parts.append(txt)
+        gathered[cat] = "\n\n".join(parts)
+        print(f"[搜索] {cat} 完成，合并 {len(parts)} 组，共 {len(gathered[cat])} 字")
 
     # 2. 整理为结构化 JSON
     user = "以下是今天抓到的食品消费领域线索（按分类）。请按规则筛选整理并输出 JSON 数组。\n\n"
@@ -232,8 +247,8 @@ def main():
         if len(cleaned) >= 20:
             break
 
-    if len(cleaned) > MAX_DAILY:
-        cleaned = cleaned[:MAX_DAILY]
+    if len(cleaned) > TARGET:
+        cleaned = cleaned[:TARGET]
     print(f"[整理] 清洗后有效 {len(cleaned)} 条")
 
     if not cleaned:
