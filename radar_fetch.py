@@ -14,6 +14,7 @@ import random
 import datetime
 import urllib.request
 import urllib.error
+import re
 
 API_KEY = os.environ.get("ZHIPU_API_KEY", "").strip()
 SEARCH_MODEL = (os.environ.get("ZHIPU_SEARCH_MODEL") or "glm-4-flash").strip()
@@ -57,6 +58,7 @@ SYSTEM_PROMPT = """你是央广网民生频道记者的选题助手，负责从"
 
 【分类与数量】重点抓前三类，后两类每类严格不超过 3 条。合计约 20 条（18~22 条），严格不超过 30 条；尽量把有价值的线索都列全，前三类每类尽量不少于 5 条：
 1. 监管处罚/抽检通报（重点，6-10 条）：市监总局及各地市监局食品抽检不合格、行政处罚、召回、违法广告处罚；优先总局与省级发布。
+   去重铁律：同一企业/同一产品/同一批次的不合格通报，无论总局、省局还是媒体转述，必须合并为 1 条，不要重复收录。标题不同但实质同一事件的，只保留最新/最权威来源的那 1 条。
 2. 消费骗局/欺骗手法（重点，5-8 条）：虚假宣传、套用认证、成分纯度虚标、欺诈套路、坑老会销等——最有深度调查价值，尽量抓全并标 deep=true。
 3. 大品牌投诉与舆情（重点，5-8 条）：知名品牌食安事件、投诉、集体维权、媒体曝光、热搜。
 4. 法律法规（≤3 条）：只挑最关键——食品安全法修订、重要食品标准出台/征求意见、重大政策解读等，普通动态不收。
@@ -173,6 +175,31 @@ def normalize(item):
     }
 
 
+def dedup_regulatory(items):
+    """对监管处罚类基于文本相似度去重，保留先出现的那条（通常更新/更权威）。"""
+    result = []
+    signatures = []
+    for it in items:
+        if it["type"] != "监管处罚":
+            result.append(it)
+            continue
+        text = it["title"] + it["summary"]
+        chars = set(re.findall(r'[\u4e00-\u9fff]', text))
+        dup = False
+        for prev in signatures:
+            if not prev:
+                continue
+            inter = len(chars & prev)
+            sim = inter / max(len(chars), len(prev))
+            if inter >= 8 and sim > 0.35:
+                dup = True
+                break
+        if not dup:
+            result.append(it)
+            signatures.append(chars)
+    return result
+
+
 def load_cloud():
     data, h = http_json(SYNC_LOAD)
     return data, h.get("X-Saved-At")
@@ -247,6 +274,10 @@ def main():
                 seen.add(n["title"])
         if len(cleaned) >= 22:
             break
+
+    # 监管处罚类二次去重（同一通报多来源/多标题重复）
+    cleaned = dedup_regulatory(cleaned)
+    print(f"[整理] 监管处罚去重后 {len(cleaned)} 条")
 
     # 后两类（法律法规、行业快讯）各自单独不超过 3 条
     limited = []
