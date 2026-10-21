@@ -62,6 +62,7 @@ SYSTEM_PROMPT = """你是央广网民生频道记者的选题助手，负责从"
 4. 法律法规（≤3 条）：只挑最关键——食品安全法修订、重要食品标准出台/征求意见、重大政策解读等，普通动态不收。
 5. 行业快讯（≤3 条）：只挑最关键——重大行业政策、标志性关店/财报事件等，普通财报关店上市人事不收。
 注意：第 4、5 两类（法律法规、行业快讯）各自单独不超过 3 条。
+硬性要求：五大类每类每天至少必须有 1 条线索，绝对不能空窗；如果某类实在没有重磅新闻，宁可降档保留 1 条相关动态，也不能整类消失。
 
 【筛选铁律】只要：民生、食品安全、消费维权相关。
 排除：外交/国际/军事/纯时政/广告软文/娱乐八卦/纯财经股市/科技数码/泛商业公司股权人事变更/影视娱乐互联网动态——除非直接涉及食品消费或消费者权益。
@@ -258,6 +259,19 @@ def main():
             sec_counts[t] += 1
         limited.append(it)
     cleaned = limited
+
+    # 保证五大类每类至少 1 条，绝不空窗
+    types_all = ["监管处罚", "法律法规", "消费骗局", "品牌舆情", "行业快讯"]
+    have = {t: [] for t in types_all}
+    for it in cleaned:
+        have[it["type"]].append(it)
+    ensured = []
+    for t in types_all:
+        if have[t]:
+            ensured.append(have[t][0])
+    ensured_ids = {it["id"] for it in ensured}
+    remaining = [it for it in cleaned if it["id"] not in ensured_ids]
+    cleaned = ensured + remaining
 
     if len(cleaned) > TARGET:
         cleaned = cleaned[:TARGET]
