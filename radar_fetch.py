@@ -75,9 +75,15 @@ SYSTEM_PROMPT = """你是央广网民生频道记者的选题助手，负责从"
 
 【输出格式】只输出一个 JSON 数组，不要任何其他文字、不要 markdown 代码块、不要解释。
 数组每项字段（全部字符串或布尔）：
-{"title":"一句话标题","summary":"30-60字摘要","source":"来源机构或媒体名","url":"原文链接(必须是搜索结果里真实出现的链接，没有就留空字符串，禁止编造)","type":"监管处罚|法律法规|消费骗局|品牌舆情|行业快讯 之一","deep":true或false}
+{"title":"一句话标题","summary":"30-60字摘要","source":"来源机构或媒体名","url":"原文链接(必须是搜索结果里真实出现的链接，没有就留空字符串，禁止编造)","type":"监管处罚|法律法规|消费骗局|品牌舆情|行业快讯 之一","deep":true或false,"date":"事件发生日期，格式YYYY-MM-DD，必须是近3天内的真实日期"}
 
-deep=true 表示有深度调查操作空间（虚假宣传、欺诈套路、系统性食安问题、可复制的坑老套路等）。"""
+deep=true 表示有深度调查操作空间（虚假宣传、欺诈套路、系统性食安问题、可复制的坑老套路等）。
+
+【时效铁律】
+- 只收录近3天内（今天、昨天、前天）发生或首次曝光的新闻。
+- 如果一条新闻的日期无法确认，或日期明显超过3天，坚决不收录。
+- 警惕"旧闻新炒"：很多公众号今天转发1个月前的事件，这种必须排除。判断方法：看事件实际发生日期（企业回应日期、监管部门通报日期），不是文章发布日期。
+- 输出时必须填写真实的事件date字段（YYYY-MM-DD），脚本会校验；日期超过7天的条目会被自动丢弃。"""
 
 
 def now_ts():
@@ -94,6 +100,50 @@ def date_range_str():
     return f"{start.strftime('%Y年%m月%d日')}至{end.strftime('%Y年%m月%d日')}"
 
 
+def parse_date(text):
+    """从文本中提取日期，返回 datetime 对象或 None。"""
+    patterns = [
+        r'(\d{4})[\-/年](\d{1,2})[\-/月](\d{1,2})',
+        r'(\d{4})(\d{2})(\d{2})',
+    ]
+    for p in patterns:
+        m = re.search(p, text)
+        if m:
+            try:
+                return datetime.datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)), tzinfo=TZ)
+            except Exception:
+                pass
+    return None
+
+
+def is_recent(dt, days=7):
+    """判断日期是否在指定天数内。"""
+    if not dt:
+        return False
+    now = datetime.datetime.now(TZ)
+    delta = now - dt
+    return delta.days <= days and delta.total_seconds() >= -86400  # 允许未来1天内的误差
+
+
+def check_url(url, timeout=8):
+    """快速检查链接是否可达，返回 (ok, real_url)。"""
+    if not url or not url.startswith(("http://", "https://")):
+        return False, url
+    try:
+        req = urllib.request.Request(url, method="HEAD", headers={"User-Agent": "deep-radar/1.0"})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return True, r.geturl()
+    except Exception:
+        pass
+    # HEAD 失败时尝试 GET（部分服务器不支持 HEAD）
+    try:
+        req = urllib.request.Request(url, method="GET", headers={"User-Agent": "deep-radar/1.0"})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return True, r.geturl()
+    except Exception:
+        return False, url
+
+
 def http_json(url, data=None, method=None, headers=None, timeout=300):
     h = {"User-Agent": "deep-radar/1.0", "Content-Type": "application/json"}
     if headers:
@@ -104,10 +154,11 @@ def http_json(url, data=None, method=None, headers=None, timeout=300):
         return json.loads(r.read()), r.headers
 
 
-def glm_search(query):
+def glm_search(query, date_hint=""):
     """调用 GLM 的 web_search 工具联网搜索，返回模型整理出的文本。"""
-    messages = [{"role": "user", "content": "请联网搜索以下主题的最新新闻，逐条列出：标题、来源、日期、一句话要点。\n\n主题：" + query}]
-    tools = [{"type": "web_search", "web_search": {"search_query": query}}]
+    full_query = f"{date_hint} {query}".strip()
+    messages = [{"role": "user", "content": "请联网搜索以下主题的最新新闻，逐条列出：标题、来源、日期、一句话要点、原文链接。\n\n主题：" + full_query}]
+    tools = [{"type": "web_search", "web_search": {"search_query": full_query}}]
     for _ in range(3):
         payload = {"model": SEARCH_MODEL, "messages": messages, "tools": tools, "temperature": 0.3}
         data, _ = http_json(GLM_URL, payload, headers={"Authorization": f"Bearer {API_KEY}"})
@@ -120,7 +171,7 @@ def glm_search(query):
         messages.append({"role": "assistant", "content": msg.get("content"), "tool_calls": tc})
         for c in tc:
             messages.append({"role": "tool", "tool_call_id": c["id"],
-                             "content": json.dumps({"search_query": query}, ensure_ascii=False)})
+                             "content": json.dumps({"search_query": full_query}, ensure_ascii=False)})
     return ""
 
 
@@ -162,6 +213,12 @@ def normalize(item):
     t = str(item.get("type", "")).strip()
     if t not in types:
         t = "监管处罚"
+    # 解析日期
+    date_str = str(item.get("date", "")).strip()
+    dt = parse_date(date_str) if date_str else None
+    # 如果 AI 没给 date，尝试从标题和摘要里提取
+    if not dt:
+        dt = parse_date(title + " " + str(item.get("summary", "")))
     return {
         "id": f"{now_ts()}-{random.randint(1000, 9999)}",
         "title": title,
@@ -172,6 +229,7 @@ def normalize(item):
         "deep": bool(item.get("deep", False)),
         "read": False,
         "createdAt": now_ts(),
+        "eventDate": date_str,
     }
 
 
@@ -237,14 +295,16 @@ def main():
 
     # 1. 五大分类搜索（每个分类多组关键词 + 网络失败自动重试）
     gathered = {}
+    today = today_str()
+    month_hint = datetime.datetime.now(TZ).strftime("%Y年%m月")
     for cat, kws in CATEGORIES:
         parts = []
         for kw in kws:
-            q = f"近3天（{dr}）{kw}"
+            q = f"{month_hint} {kw}"
             txt = ""
             for attempt in range(2):
                 try:
-                    txt = glm_search(q)
+                    txt = glm_search(q, date_hint=f"{today}近3天")
                     if txt:
                         break
                 except Exception as e:
@@ -278,6 +338,32 @@ def main():
     # 监管处罚类二次去重（同一通报多来源/多标题重复）
     cleaned = dedup_regulatory(cleaned)
     print(f"[整理] 监管处罚去重后 {len(cleaned)} 条")
+
+    # 日期过滤：丢弃超过7天的旧闻
+    recent = []
+    for it in cleaned:
+        dt = parse_date(it.get("eventDate", ""))
+        if not dt:
+            dt = parse_date(it["title"] + " " + it["summary"])
+        if is_recent(dt, days=7):
+            recent.append(it)
+        else:
+            print(f"[过滤] 旧闻丢弃: {it['title'][:30]}... (日期 {it.get('eventDate','unknown')})")
+    cleaned = recent
+    print(f"[整理] 日期过滤后 {len(cleaned)} 条")
+
+    # 链接过滤：丢弃无有效链接的条目（无法溯源的新闻不要）
+    linked = []
+    for it in cleaned:
+        url = it.get("url", "")
+        ok, real_url = check_url(url)
+        if ok:
+            it["url"] = real_url
+            linked.append(it)
+        else:
+            print(f"[过滤] 链接失效丢弃: {it['title'][:30]}...")
+    cleaned = linked
+    print(f"[整理] 链接验证后 {len(cleaned)} 条")
 
     # 后两类（法律法规、行业快讯）各自单独不超过 3 条
     limited = []
