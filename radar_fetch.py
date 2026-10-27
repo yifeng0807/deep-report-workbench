@@ -339,31 +339,35 @@ def main():
     cleaned = dedup_regulatory(cleaned)
     print(f"[整理] 监管处罚去重后 {len(cleaned)} 条")
 
-    # 日期过滤：丢弃超过7天的旧闻
+    # 日期过滤：只丢弃"能确认日期且明确超过7天"的旧闻；日期不明的保留，避免误杀
     recent = []
+    dropped = []  # 被判定为旧闻的，留作兜底补回
     for it in cleaned:
         dt = parse_date(it.get("eventDate", ""))
         if not dt:
             dt = parse_date(it["title"] + " " + it["summary"])
-        if is_recent(dt, days=7):
-            recent.append(it)
-        else:
+        if dt and not is_recent(dt, days=7):
+            dropped.append(it)
             print(f"[过滤] 旧闻丢弃: {it['title'][:30]}... (日期 {it.get('eventDate','unknown')})")
+            continue
+        recent.append(it)
+    # 兜底：过滤后不足5条时补回旧闻——宁可有点旧，也绝不空窗
+    if len(recent) < 5 and dropped:
+        need = min(5 - len(recent), len(dropped))
+        recent.extend(dropped[:need])
+        print(f"[兜底] 新鲜条目不足5条，补回 {need} 条旧闻避免空窗")
     cleaned = recent
     print(f"[整理] 日期过滤后 {len(cleaned)} 条")
 
-    # 链接过滤：丢弃无有效链接的条目（无法溯源的新闻不要）
-    linked = []
+    # 链接软性验证：能验证通过就更新为真实URL；验证失败或无链接的保留条目，绝不丢弃
+    # 注意：GitHub Actions 在美国节点，访问国内站点常超时，故绝不能据此丢弃条目
     for it in cleaned:
         url = it.get("url", "")
-        ok, real_url = check_url(url)
-        if ok:
-            it["url"] = real_url
-            linked.append(it)
-        else:
-            print(f"[过滤] 链接失效丢弃: {it['title'][:30]}...")
-    cleaned = linked
-    print(f"[整理] 链接验证后 {len(cleaned)} 条")
+        ok, real_url = check_url(url, timeout=5)
+        it["url"] = real_url if ok else url
+        it["linkOk"] = ok
+    ok_count = sum(1 for x in cleaned if x.get("linkOk"))
+    print(f"[整理] 链接验证通过 {ok_count}/{len(cleaned)} 条（未通过的保留，仅标记）")
 
     # 后两类（法律法规、行业快讯）各自单独不超过 3 条
     limited = []
