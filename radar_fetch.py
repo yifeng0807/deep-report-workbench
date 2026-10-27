@@ -3,21 +3,30 @@
 深流 · 每日雷达 · 云端抓取脚本
 由 GitHub Actions 每天 12:00(北京时间) 定时运行，完全不依赖本机 / WorkBuddy 客户端。
 
-流程：GLM 联网搜索(五大分类) -> GLM 整理为结构化 JSON -> 写入云端同步服务。
-环境变量：ZHIPU_API_KEY(必填)、ZHIPU_MODEL(可选，默认 glm-4-flash)
+架构（2026-10-27 重构）：
+  1. 抓取：直接抓权威信源列表页 + 文章页，拿到**真实**的标题/链接/日期/正文片段。
+  2. 整理：GLM 只基于真实素材做筛选、分类、摘要——不再让 AI "搜索"，杜绝编造。
+  3. 后处理：时效过滤(宽松+兜底) → 分类限额 → 每类保底 → 写库。
+  4. 任何一步拿不到数据都以非零退出码结束，避免"静默成功"。
+
+环境变量：ZHIPU_API_KEY(必填)
 """
 import os
 import sys
+import re
 import json
 import time
+import html
 import random
 import datetime
 import urllib.request
 import urllib.error
-import re
+import ssl
+from concurrent.futures import ThreadPoolExecutor
+
+ssl._create_default_https_context = ssl._create_unverified_context
 
 API_KEY = os.environ.get("ZHIPU_API_KEY", "").strip()
-SEARCH_MODEL = (os.environ.get("ZHIPU_SEARCH_MODEL") or "glm-4-flash").strip()
 CHAT_MODEL = (os.environ.get("ZHIPU_MODEL") or "glm-4-flash").strip()
 GLM_URL = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
 
@@ -25,65 +34,63 @@ SYNC_LOAD = "https://yulin-scale-sync.onrender.com/api/load/caixie2026"
 SYNC_SAVE = "https://yulin-scale-sync.onrender.com/api/save?id=caixie2026"
 
 TZ = datetime.timezone(datetime.timedelta(hours=8))
+UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+      "(KHTML, like Gecko) Chrome/120.0 Safari/537.36")
 
-# 五大分类及其搜索关键词（每个分类多组关键词扩大覆盖，运行时拼接"近3天"日期范围）
-CATEGORIES = [
-    ("监管处罚", [
-        "市场监管总局 食品 抽检 不合格 通报 处罚 召回",
-        "食品 抽检不合格 品牌 罚款 市监局 查处 最新",
-    ]),
-    ("法律法规", [
-        "食品安全法 食品标准 修订 征求意见 市场监管总局 卫健委",
-        "食品 新规 政策 发布 卫健委 市场监管总局",
-    ]),
-    ("消费骗局", [
-        "食品 虚假宣传 欺诈 骗局 会销 坑老 私域直播 查处",
-        "保健品 虚假宣传 直播带货 诈骗 老年人 案例",
-    ]),
-    ("品牌舆情", [
-        "食品品牌 食品安全 投诉 曝光 异物 黑猫投诉 热搜",
-        "食品 吃出 异物 品牌 道歉 回应 最新",
-    ]),
-    ("行业快讯", [
-        "食品饮料 企业 财报 关店 乳制品 餐饮 行业动态",
-        "食品 行业 政策 趋势 新规",
-    ]),
+# 权威信源：直接抓列表页，不依赖任何搜索 API
+# 优先国内民生向（监管处罚/消费维权/品牌舆情），法规频道兜底法律法规类
+SOURCES = [
+    ("食品伙伴网-国内", "https://news.foodmate.net/guonei/"),
+    ("中国质量新闻网-民生", "https://www.cqn.com.cn/ms/"),
+    ("食品伙伴网-资讯", "https://news.foodmate.net/"),
+    ("食品伙伴网-法规", "https://law.foodmate.net/"),
 ]
 
-MAX_DAILY = 30  # 每天最多条目数（硬性上限）
-TARGET = 20     # 每天目标条数
+MAX_PER_SOURCE = 25   # 每个源最多取多少条候选（配额均衡，避免单源霸占）
+MAX_ARTICLE_FETCH = 120  # 最多并发抓多少篇文章正文（控制耗时）
+RECENT_DAYS = 10      # 时效窗口（源更新偏慢，放宽到10天再由 GLM 优先选最新）
+TARGET = 20
+MAX_DAILY = 30
+TYPES = ["监管处罚", "法律法规", "消费骗局", "品牌舆情", "行业快讯"]
 
-# 整理阶段的系统提示（复用自动化筛选规则）
-SYSTEM_PROMPT = """你是央广网民生频道记者的选题助手，负责从"食品消费"领域的搜索结果中筛选整理出有价值的选题线索。
+SYSTEM_PROMPT = """你是央广网民生频道记者的选题助手。下面给你一批**从权威食品行业网站真实抓取**的新闻素材（含标题、链接、发布日期、正文片段）。
 
-【分类与数量】重点抓前三类，后两类每类严格不超过 3 条。合计约 20 条（18~22 条），严格不超过 30 条；尽量把有价值的线索都列全，前三类每类尽量不少于 5 条：
-1. 监管处罚/抽检通报（重点，6-10 条）：市监总局及各地市监局食品抽检不合格、行政处罚、召回、违法广告处罚；优先总局与省级发布。
-   去重铁律：同一企业/同一产品/同一批次的不合格通报，无论总局、省局还是媒体转述，必须合并为 1 条，不要重复收录。标题不同但实质同一事件的，只保留最新/最权威来源的那 1 条。
-2. 消费骗局/欺骗手法（重点，5-8 条）：虚假宣传、套用认证、成分纯度虚标、欺诈套路、坑老会销等——最有深度调查价值，尽量抓全并标 deep=true。
-3. 大品牌投诉与舆情（重点，5-8 条）：知名品牌食安事件、投诉、集体维权、媒体曝光、热搜。
-4. 法律法规（≤3 条）：只挑最关键——食品安全法修订、重要食品标准出台/征求意见、重大政策解读等，普通动态不收。
-5. 行业快讯（≤3 条）：只挑最关键——重大行业政策、标志性关店/财报事件等，普通财报关店上市人事不收。
-注意：第 4、5 两类（法律法规、行业快讯）各自单独不超过 3 条。
-硬性要求：五大类每类每天至少必须有 1 条线索，绝对不能空窗；如果某类实在没有重磅新闻，宁可降档保留 1 条相关动态，也不能整类消失。
+你的任务只有一个：从中**筛选**出有价值的选题线索，按五大类分类，并写出摘要。
 
-【筛选铁律】只要：民生、食品安全、消费维权相关。
-排除：外交/国际/军事/纯时政/广告软文/娱乐八卦/纯财经股市/科技数码/泛商业公司股权人事变更/影视娱乐互联网动态——除非直接涉及食品消费或消费者权益。
-- 时效：只收近 3 天内容，优先最新；7 天以前的坚决不选。
-- 地域门槛：地市级及以下（地级市/区县/县级市/单个小门店）的常规抽检通报、个案处罚、本地典型案例一般不选，除非涉及全国知名品牌、影响面极广或事情闹得特别大（如梧州、贺州、惠州、南通通州这类直接排除）。
-- 同一事件多个来源合并为一条，不要拆成重复多条。
-- 信源白名单优先：红星新闻、极目新闻、澎湃新闻（尤其"马上测"栏目）、人民日报、央广网、中国新闻周刊、界面新闻、新京报、封面新闻、中国青年报、潇湘晨报、南方都市报、北京日报、新华社、中国食品报、庶正康讯、中新经纬、国是直通车、央视新闻、北京青年报、中国质量新闻网、中国消费者报 等，以及市场监管总局、卫健委、药监局、中消协官方发布。
+【绝对禁止】
+- 禁止编造任何素材里没有的新闻、企业名、事件细节、链接。
+- 禁止使用"XX公司""某品牌""某公司"这类占位符。素材里没写具体名字的，就不要收录。
+- 禁止自己"补充"素材里没有的链接。链接必须原样照抄素材里给出的 url 字段。
+- 如果某条素材信息不足以判断，宁可不收，也不要凑数。
 
-【输出格式】只输出一个 JSON 数组，不要任何其他文字、不要 markdown 代码块、不要解释。
-数组每项字段（全部字符串或布尔）：
-{"title":"一句话标题","summary":"30-60字摘要","source":"来源机构或媒体名","url":"原文链接(必须是搜索结果里真实出现的链接，没有就留空字符串，禁止编造)","type":"监管处罚|法律法规|消费骗局|品牌舆情|行业快讯 之一","deep":true或false,"date":"事件发生日期，格式YYYY-MM-DD，必须是近3天内的真实日期"}
+【五大分类】
+1. 监管处罚：抽检不合格通报、行政处罚、召回、违法广告处罚。优先总局/省级。
+2. 消费骗局：虚假宣传、套用认证、成分虚标、欺诈套路、坑老会销、私域直播骗局。有深度调查价值的标 deep=true。
+3. 品牌舆情：知名品牌食安事件、投诉、集体维权、媒体曝光、异物。
+4. 法律法规：食品安全法/标准修订、新规征求意见、重大政策解读。
+5. 行业快讯：重大行业政策、标志性关店/财报事件。
 
-deep=true 表示有深度调查操作空间（虚假宣传、欺诈套路、系统性食安问题、可复制的坑老套路等）。
+【展开合集标题 —— 重要】
+素材里常有"今日导读：A；B；C"或"一周舆情汇总"这类**合集标题**，一条里包含多条新闻。
+对于这类素材，请把它**拆开成多条独立线索**分别收录（每条用各自的小标题），
+url 仍照抄该合集素材的 url。这是获取品牌舆情、消费骗局类线索的主要来源。
 
-【时效铁律】
-- 只收录近3天内（今天、昨天、前天）发生或首次曝光的新闻。
-- 如果一条新闻的日期无法确认，或日期明显超过3天，坚决不收录。
-- 警惕"旧闻新炒"：很多公众号今天转发1个月前的事件，这种必须排除。判断方法：看事件实际发生日期（企业回应日期、监管部门通报日期），不是文章发布日期。
-- 输出时必须填写真实的事件date字段（YYYY-MM-DD），脚本会校验；日期超过7天的条目会被自动丢弃。"""
+【筛选规则】
+- 只要国内民生、食品安全、消费维权相关。
+- **必须排除**：
+  · 进出口预警/国外疫情（如出口被检出有害生物、国外H5N1禽流感、他国召回）——不是国内民生。
+  · 地市级及以下的常规抽检公示（如某某市第X期抽检信息公示）——除非涉及全国知名品牌。
+  · 非食品类产品质量抽查（水泥、消防器材、服装等非食品）。
+  · 外交/军事/纯时政/娱乐/纯财经股市/科技数码。
+- 同一事件多个来源只留 1 条。
+- 优先保留日期最新的。
+
+【数量】合计约 20 条；第 4、5 两类（法律法规、行业快讯）各自不超过 3 条；五大类每类至少 1 条。
+
+【输出】只输出一个 JSON 数组，不要任何其他文字、不要 markdown 代码块。
+每项字段：
+{"title":"必须与素材标题一致，不要改写","summary":"40-80字摘要，只能基于素材正文片段概括","source":"食品伙伴网","url":"原样照抄素材里的url","type":"监管处罚|法律法规|消费骗局|品牌舆情|行业快讯","deep":true或false,"date":"素材里的发布日期YYYY-MM-DD"}
+"""
 
 
 def now_ts():
@@ -94,89 +101,101 @@ def today_str():
     return datetime.datetime.now(TZ).strftime("%Y-%m-%d")
 
 
-def date_range_str():
-    end = datetime.datetime.now(TZ)
-    start = end - datetime.timedelta(days=3)
-    return f"{start.strftime('%Y年%m月%d日')}至{end.strftime('%Y年%m月%d日')}"
-
-
 def parse_date(text):
-    """从文本中提取日期，返回 datetime 对象或 None。"""
-    patterns = [
-        r'(\d{4})[\-/年](\d{1,2})[\-/月](\d{1,2})',
-        r'(\d{4})(\d{2})(\d{2})',
-    ]
-    for p in patterns:
-        m = re.search(p, text)
+    """从文本提取日期。"""
+    if not text:
+        return None
+    for p in [r'(\d{4})[\-/年](\d{1,2})[\-/月](\d{1,2})', r'(\d{4})(\d{2})(\d{2})']:
+        m = re.search(p, str(text))
         if m:
             try:
-                return datetime.datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)), tzinfo=TZ)
+                return datetime.datetime(int(m.group(1)), int(m.group(2)),
+                                         int(m.group(3)), tzinfo=TZ)
             except Exception:
                 pass
     return None
 
 
-def is_recent(dt, days=7):
-    """判断日期是否在指定天数内。"""
+def is_recent(dt, days=RECENT_DAYS):
     if not dt:
         return False
-    now = datetime.datetime.now(TZ)
-    delta = now - dt
-    return delta.days <= days and delta.total_seconds() >= -86400  # 允许未来1天内的误差
+    delta = datetime.datetime.now(TZ) - dt
+    return delta.days <= days and delta.total_seconds() >= -86400
 
 
-def check_url(url, timeout=8):
-    """快速检查链接是否可达，返回 (ok, real_url)。"""
-    if not url or not url.startswith(("http://", "https://")):
-        return False, url
+def http_get(url, timeout=20):
+    """抓取网页并按声明编码解码。"""
+    req = urllib.request.Request(url, headers={"User-Agent": UA})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        raw = r.read()
+        enc = r.headers.get_content_charset() or "utf-8"
+    return raw.decode(enc, "ignore")
+
+
+def clean_text(t):
+    t = re.sub(r'<script.*?</script>', ' ', t, flags=re.S | re.I)
+    t = re.sub(r'<style.*?</style>', ' ', t, flags=re.S | re.I)
+    t = re.sub(r'<[^>]+>', ' ', t)
+    t = html.unescape(t)
+    return re.sub(r'\s+', ' ', t).strip()
+
+
+# 判断链接是否像"文章页"（而非首页/栏目页/静态资源）
+ARTICLE_HINT = re.compile(
+    r'(/\d{4}[-/]\d{1,2}|/\d{6,}\.html|/content[_-]|show-\d+|/news/[^"]*\d+\.html)', re.I)
+SKIP_EXT = re.compile(r'\.(css|js|jpg|jpeg|png|gif|ico|svg|xml|json|pdf)$', re.I)
+
+
+def is_article_link(link):
+    if not link.startswith(("http://", "https://")):
+        return False
+    if SKIP_EXT.search(link):
+        return False
+    return bool(ARTICLE_HINT.search(link))
+
+
+def fetch_list(source_url):
+    """从列表页提取 (title, link)，通用适配多站点。"""
     try:
-        req = urllib.request.Request(url, method="HEAD", headers={"User-Agent": "deep-radar/1.0"})
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            return True, r.geturl()
+        t = http_get(source_url, timeout=25)
+    except Exception as e:
+        print(f"[抓取] 列表页失败 {source_url}: {type(e).__name__}")
+        return []
+    found = []
+    # 形态1：<a href title="...">
+    for link, title in re.findall(r'href="(https?://[^"]+)"[^>]*?title="([^"]{8,200})"', t):
+        if is_article_link(link):
+            found.append((html.unescape(title).strip(), link))
+    # 形态2：<a href>纯文本</a>
+    if len(found) < 5:
+        for link, title in re.findall(r'href="(https?://[^"]+)"[^>]*>([^<]{10,120})', t):
+            if is_article_link(link):
+                found.append((html.unescape(title).strip(), link))
+    out, seen = [], set()
+    for title, link in found:
+        if link in seen:
+            continue
+        seen.add(link)
+        out.append((title, link))
+    return out[:MAX_PER_SOURCE]
+
+
+def fetch_article(job):
+    """抓单篇文章：返回 (date, snippet)。日期依次尝试 URL→标题→正文。"""
+    title, link = job
+    date = parse_date(link) or parse_date(title)
+    snippet = ""
+    try:
+        t = http_get(link, timeout=15)
+        if not date:
+            date = parse_date(t[:8000])
+        snippet = clean_text(t)[:1000]
     except Exception:
         pass
-    # HEAD 失败时尝试 GET（部分服务器不支持 HEAD）
-    try:
-        req = urllib.request.Request(url, method="GET", headers={"User-Agent": "deep-radar/1.0"})
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            return True, r.geturl()
-    except Exception:
-        return False, url
-
-
-def http_json(url, data=None, method=None, headers=None, timeout=300):
-    h = {"User-Agent": "deep-radar/1.0", "Content-Type": "application/json"}
-    if headers:
-        h.update(headers)
-    body = json.dumps(data, ensure_ascii=False).encode("utf-8") if data is not None else None
-    req = urllib.request.Request(url, data=body, headers=h, method=method)
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read()), r.headers
-
-
-def glm_search(query, date_hint=""):
-    """调用 GLM 的 web_search 工具联网搜索，返回模型整理出的文本。"""
-    full_query = f"{date_hint} {query}".strip()
-    messages = [{"role": "user", "content": "请联网搜索以下主题的最新新闻，逐条列出：标题、来源、日期、一句话要点、原文链接。\n\n主题：" + full_query}]
-    tools = [{"type": "web_search", "web_search": {"search_query": full_query}}]
-    for _ in range(3):
-        payload = {"model": SEARCH_MODEL, "messages": messages, "tools": tools, "temperature": 0.3}
-        data, _ = http_json(GLM_URL, payload, headers={"Authorization": f"Bearer {API_KEY}"})
-        msg = data["choices"][0]["message"]
-        if msg.get("content"):
-            return msg["content"].strip()
-        tc = msg.get("tool_calls")
-        if not tc:
-            return ""
-        messages.append({"role": "assistant", "content": msg.get("content"), "tool_calls": tc})
-        for c in tc:
-            messages.append({"role": "tool", "tool_call_id": c["id"],
-                             "content": json.dumps({"search_query": full_query}, ensure_ascii=False)})
-    return ""
+    return date, snippet
 
 
 def glm_chat_json(system, user, retries=2):
-    """纯文本整理，要求模型输出严格 JSON 数组。"""
     payload = {"model": CHAT_MODEL,
                "messages": [{"role": "system", "content": system},
                             {"role": "user", "content": user}],
@@ -191,40 +210,45 @@ def glm_chat_json(system, user, retries=2):
     return None
 
 
+def http_json(url, data=None, method=None, headers=None, timeout=300):
+    h = {"User-Agent": "deep-radar/1.0", "Content-Type": "application/json"}
+    if headers:
+        h.update(headers)
+    body = json.dumps(data, ensure_ascii=False).encode("utf-8") if data is not None else None
+    req = urllib.request.Request(url, data=body, headers=h, method=method)
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read()), r.headers
+
+
 def extract_json_array(text):
     start = text.find("[")
     if start == -1:
         return None
-    dec = json.JSONDecoder()
     try:
-        val, _ = dec.raw_decode(text[start:].lstrip())
-        if isinstance(val, list):
-            return val
+        val, _ = json.JSONDecoder().raw_decode(text[start:].lstrip())
+        return val if isinstance(val, list) else None
     except Exception:
-        pass
-    return None
+        return None
 
 
-def normalize(item):
-    types = {"监管处罚", "法律法规", "消费骗局", "品牌舆情", "行业快讯"}
+def normalize(item, allowed_links):
+    """整理条目；url 必须来自真实抓到的素材，否则置空。"""
     title = str(item.get("title", "")).strip()
     if not title:
         return None
     t = str(item.get("type", "")).strip()
-    if t not in types:
+    if t not in TYPES:
         t = "监管处罚"
-    # 解析日期
+    url = str(item.get("url", "")).strip()
+    if url not in allowed_links:
+        url = ""  # AI 若给出素材外的链接，一律清空
     date_str = str(item.get("date", "")).strip()
-    dt = parse_date(date_str) if date_str else None
-    # 如果 AI 没给 date，尝试从标题和摘要里提取
-    if not dt:
-        dt = parse_date(title + " " + str(item.get("summary", "")))
     return {
         "id": f"{now_ts()}-{random.randint(1000, 9999)}",
         "title": title,
         "summary": str(item.get("summary", "")).strip(),
-        "source": str(item.get("source", "")).strip(),
-        "url": str(item.get("url", "")).strip(),
+        "source": str(item.get("source", "")).strip() or "食品伙伴网",
+        "url": url,
         "type": t,
         "deep": bool(item.get("deep", False)),
         "read": False,
@@ -233,28 +257,41 @@ def normalize(item):
     }
 
 
+# 脚本层面硬过滤：GLM 对排除规则执行不稳定，杂音在此强制剔除
+NOISE_PATTERNS = [
+    r'我国出口', r'出口.{0,10}检出', r'H5N1', r'高致病性(禽流感|甲型流感)',
+    r'罗马尼亚', r'爱尔兰', r'波多黎各', r'德国发生', r'韩国食药', r'欧盟',
+    r'输华', r'境外', r'他国召回',
+]
+# 地市级/地区级常规抽检（省级用"省市场监督管理局"，总局用"市场监管总局"，不会被误杀）
+LOCAL_PATTERN = r'(市市场监督管理局|市监局|地区.{0,12}(抽查|抽检|净含量))'
+
+
+def is_noise(title):
+    for p in NOISE_PATTERNS:
+        if re.search(p, title):
+            return True
+    if re.search(LOCAL_PATTERN, title) and re.search(r'(抽检|抽查|公示|净含量)', title):
+        return True
+    return False
+
+
 def dedup_regulatory(items):
-    """对监管处罚类基于文本相似度去重，保留先出现的那条（通常更新/更权威）。"""
-    result = []
-    signatures = []
+    result, sigs = [], []
     for it in items:
         if it["type"] != "监管处罚":
             result.append(it)
             continue
-        text = it["title"] + it["summary"]
-        chars = set(re.findall(r'[\u4e00-\u9fff]', text))
+        chars = set(re.findall(r'[\u4e00-\u9fff]', it["title"] + it["summary"]))
         dup = False
-        for prev in signatures:
-            if not prev:
-                continue
+        for prev in sigs:
             inter = len(chars & prev)
-            sim = inter / max(len(chars), len(prev))
-            if inter >= 8 and sim > 0.35:
+            if inter >= 8 and inter / max(len(chars), len(prev)) > 0.35:
                 dup = True
                 break
         if not dup:
             result.append(it)
-            signatures.append(chars)
+            sigs.append(chars)
     return result
 
 
@@ -265,22 +302,21 @@ def load_cloud():
 
 def merge_into(cloud, day, items):
     arr = cloud.setdefault("daily", {}).setdefault(day, [])
-    have_titles = {x.get("title") for x in arr}
+    have = {x.get("title") for x in arr}
     added = []
     for it in items:
-        if it["title"] in have_titles:
+        if it["title"] in have:
             continue
         arr.insert(0, it)
         added.append(it)
-        have_titles.add(it["title"])
+        have.add(it["title"])
     if len(arr) > MAX_DAILY:
         arr[:] = arr[:MAX_DAILY]
     return added
 
 
 def save_cloud(data, base):
-    url = SYNC_SAVE + "&base=" + str(base)
-    resp, h = http_json(url, data, method="POST")
+    resp, _ = http_json(SYNC_SAVE + "&base=" + str(base), data, method="POST")
     return resp
 
 
@@ -290,119 +326,109 @@ def main():
         sys.exit(1)
 
     today = today_str()
-    dr = date_range_str()
-    print(f"== 每日雷达抓取开始 日期={today} 范围={dr} 搜索={SEARCH_MODEL} 整理={CHAT_MODEL} ==")
+    print(f"== 每日雷达抓取开始 日期={today} 信源={len(SOURCES)} 整理={CHAT_MODEL} ==")
 
-    # 1. 五大分类搜索（每个分类多组关键词 + 网络失败自动重试）
-    gathered = {}
-    today = today_str()
-    month_hint = datetime.datetime.now(TZ).strftime("%Y年%m月")
-    for cat, kws in CATEGORIES:
-        parts = []
-        for kw in kws:
-            q = f"{month_hint} {kw}"
-            txt = ""
-            for attempt in range(2):
-                try:
-                    txt = glm_search(q, date_hint=f"{today}近3天")
-                    if txt:
-                        break
-                except Exception as e:
-                    print(f"[搜索] {cat} 异常(第{attempt+1}次): {e}")
-                    time.sleep(3)
-            if txt:
-                parts.append(txt)
-        gathered[cat] = "\n\n".join(parts)
-        print(f"[搜索] {cat} 完成，合并 {len(parts)} 组，共 {len(gathered[cat])} 字")
+    # 1. 抓取真实素材
+    jobs = []
+    for name, url in SOURCES:
+        lst = fetch_list(url)
+        print(f"[抓取] {name}: {len(lst)} 条候选")
+        jobs.extend(lst)
+    if not jobs:
+        print("ERROR: 所有信源均抓取失败")
+        sys.exit(2)
 
-    # 2. 整理为结构化 JSON
-    user = "以下是今天抓到的食品消费领域线索（按分类）。请按规则筛选整理并输出 JSON 数组。\n\n"
-    for cat, txt in gathered.items():
-        user += f"\n=====【{cat}】=====\n{txt[:6000] if txt else '（无结果）'}\n"
+    # 2. 并发抓文章正文/日期
+    jobs = jobs[:MAX_ARTICLE_FETCH]
+    print(f"[抓取] 并发抓取 {len(jobs)} 篇文章正文…")
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        results = list(ex.map(fetch_article, jobs))
 
-    # 多轮整理合并（flash 快但单次波动大，多轮去重保证覆盖）
-    cleaned = []
-    seen = set()
-    for rnd in range(3):
+    materials, allowed_links, noise_n = [], set(), 0
+    for (title, link), (date, snip) in zip(jobs, results):
+        if not date or not is_recent(date):
+            continue
+        if is_noise(title):
+            noise_n += 1
+            continue
+        allowed_links.add(link)
+        materials.append((title, link, date.strftime("%Y-%m-%d"), snip[:500]))
+    print(f"[抓取] 时效窗口内 {len(materials)} 条（剔除进出口/地市级杂音 {noise_n} 条）")
+    if not materials:
+        print("ERROR: 时效窗口内无真实素材")
+        sys.exit(3)
+
+    # 3. GLM 基于真实素材筛选分类
+    user = "以下是真实抓取的素材（标题 | 链接 | 日期 | 正文片段）：\n\n"
+    for title, link, ds, snip in materials:
+        user += f"- 标题：{title}\n  链接：{link}\n  日期：{ds}\n  正文片段：{snip[:300]}\n\n"
+
+    cleaned, seen = [], set()
+    for _ in range(2):
         items = glm_chat_json(SYSTEM_PROMPT, user)
         if not items:
             continue
         for x in items:
-            n = normalize(x)
+            n = normalize(x, allowed_links)
             if n and n["title"] not in seen:
                 cleaned.append(n)
                 seen.add(n["title"])
-        if len(cleaned) >= 22:
+        if len(cleaned) >= 18:
             break
+    print(f"[整理] GLM 输出 {len(cleaned)} 条")
+    if not cleaned:
+        print("ERROR: GLM 未输出有效条目")
+        sys.exit(4)
 
-    # 监管处罚类二次去重（同一通报多来源/多标题重复）
     cleaned = dedup_regulatory(cleaned)
-    print(f"[整理] 监管处罚去重后 {len(cleaned)} 条")
 
-    # 日期过滤：只丢弃"能确认日期且明确超过7天"的旧闻；日期不明的保留，避免误杀
-    recent = []
-    dropped = []  # 被判定为旧闻的，留作兜底补回
+    # 合集处理：GLM 有时展开合集、有时整条照抄，导致同 url 重复。
+    # 同一 url 优先保留"已展开"的短标题条目，未展开的合集标题每组只留 1 条。
+    def _is_collection(t):
+        return ('；' in t or ';' in t) and len(t) > 45
+
+    grouped, order = {}, []
     for it in cleaned:
-        dt = parse_date(it.get("eventDate", ""))
-        if not dt:
-            dt = parse_date(it["title"] + " " + it["summary"])
-        if dt and not is_recent(dt, days=7):
-            dropped.append(it)
-            print(f"[过滤] 旧闻丢弃: {it['title'][:30]}... (日期 {it.get('eventDate','unknown')})")
-            continue
-        recent.append(it)
-    # 兜底：过滤后不足5条时补回旧闻——宁可有点旧，也绝不空窗
-    if len(recent) < 5 and dropped:
-        need = min(5 - len(recent), len(dropped))
-        recent.extend(dropped[:need])
-        print(f"[兜底] 新鲜条目不足5条，补回 {need} 条旧闻避免空窗")
-    cleaned = recent
-    print(f"[整理] 日期过滤后 {len(cleaned)} 条")
+        key = it.get("url", "") or it["id"]
+        if key not in grouped:
+            grouped[key] = []
+            order.append(key)
+        grouped[key].append(it)
+    merged = []
+    for key in order:
+        g = grouped[key]
+        expanded = [x for x in g if not _is_collection(x["title"])]
+        merged.extend(expanded[:4] if expanded else [g[0]])
+    cleaned = merged
 
-    # 链接软性验证：能验证通过就更新为真实URL；验证失败或无链接的保留条目，绝不丢弃
-    # 注意：GitHub Actions 在美国节点，访问国内站点常超时，故绝不能据此丢弃条目
-    for it in cleaned:
-        url = it.get("url", "")
-        ok, real_url = check_url(url, timeout=5)
-        it["url"] = real_url if ok else url
-        it["linkOk"] = ok
-    ok_count = sum(1 for x in cleaned if x.get("linkOk"))
-    print(f"[整理] 链接验证通过 {ok_count}/{len(cleaned)} 条（未通过的保留，仅标记）")
-
-    # 后两类（法律法规、行业快讯）各自单独不超过 3 条
-    limited = []
-    sec_counts = {"法律法规": 0, "行业快讯": 0}
+    # 4. 分类限额：后两类各不超过 3 条
+    limited, cnt = [], {"法律法规": 0, "行业快讯": 0}
     for it in cleaned:
         t = it["type"]
-        if t in sec_counts:
-            if sec_counts[t] >= 3:
+        if t in cnt:
+            if cnt[t] >= 3:
                 continue
-            sec_counts[t] += 1
+            cnt[t] += 1
         limited.append(it)
     cleaned = limited
 
-    # 保证五大类每类至少 1 条，绝不空窗
-    types_all = ["监管处罚", "法律法规", "消费骗局", "品牌舆情", "行业快讯"]
-    have = {t: [] for t in types_all}
+    # 5. 五大类保底
+    have = {t: [] for t in TYPES}
     for it in cleaned:
         have[it["type"]].append(it)
-    ensured = []
-    for t in types_all:
-        if have[t]:
-            ensured.append(have[t][0])
-    ensured_ids = {it["id"] for it in ensured}
-    remaining = [it for it in cleaned if it["id"] not in ensured_ids]
-    cleaned = ensured + remaining
-
+    ensured = [have[t][0] for t in TYPES if have[t]]
+    eids = {x["id"] for x in ensured}
+    cleaned = ensured + [x for x in cleaned if x["id"] not in eids]
     if len(cleaned) > TARGET:
         cleaned = cleaned[:TARGET]
-    print(f"[整理] 清洗后有效 {len(cleaned)} 条")
 
+    with_url = sum(1 for x in cleaned if x.get("url"))
+    print(f"[整理] 最终 {len(cleaned)} 条（带真实链接 {with_url} 条）")
     if not cleaned:
-        print("WARN: 无有效条目，跳过写库")
-        sys.exit(0)
+        print("ERROR: 无有效条目")
+        sys.exit(5)
 
-    # 3. 写库（带版本号，409 重试）
+    # 6. 写库
     data, base = load_cloud()
     for attempt in range(4):
         added = merge_into(data, today, cleaned)
@@ -410,18 +436,18 @@ def main():
             save_cloud(data, base)
             print(f"[写库] 成功写入 {len(added)} 条到 {today}")
             from collections import Counter
-            print("[写库] 分类分布:", dict(Counter(x['type'] for x in added)))
+            print("[写库] 分类分布:", dict(Counter(x["type"] for x in added)))
             break
         except urllib.error.HTTPError as e:
             if e.code == 409 and attempt < 3:
                 time.sleep(2)
                 data, base = load_cloud()
                 continue
-            print(f"ERROR: 写库失败 {e.code} {e.read().decode('utf-8', 'ignore')[:200]}")
-            sys.exit(3)
+            print(f"ERROR: 写库失败 {e.code}")
+            sys.exit(6)
     else:
-        print("ERROR: 写库多次冲突仍失败")
-        sys.exit(3)
+        print("ERROR: 写库多次冲突")
+        sys.exit(6)
 
     print("== 抓取完成 ==")
 
