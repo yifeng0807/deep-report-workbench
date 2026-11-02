@@ -2,8 +2,11 @@ name: 每日雷达云端抓取
 
 on:
   schedule:
-    # UTC 04:00 = 北京时间 12:00（GitHub 定时任务可能延迟几分钟，属正常）
+    # GitHub 免费版 cron 经常延迟甚至直接跳过，故设三个时间点互为备份：
+    # 北京时间 12:00 / 14:00 / 16:00。脚本内有幂等保护，当天已有足量数据会自动跳过。
     - cron: "0 4 * * *"
+    - cron: "0 6 * * *"
+    - cron: "0 8 * * *"
   workflow_dispatch: {}
 
 permissions:
@@ -31,3 +34,5 @@ jobs:
         env:
           ZHIPU_API_KEY: ${{ secrets.ZHIPU_API_KEY }}
           ZHIPU_MODEL: ${{ secrets.ZHIPU_MODEL }}
+          # 手动触发时强制抓取；定时触发则走幂等检查（当天已有足量数据就跳过）
+          FORCE_RUN: ${{ github.event_name == 'workflow_dispatch' && '1' || '' }}
